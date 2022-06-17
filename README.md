@@ -18,7 +18,7 @@ In command line log analysis, IP geolocation metadata is most useful in *additio
 
 ## Install
 
-`geoipsed` uses Maxmind's GeoLite2-ASN.mddb and GeoLite2-City.mddb files. Follow the instructions to obtain these files here: https://dev.maxmind.com/geoip/updating-databases
+`geoipsed` uses Maxmind's GeoLite2-ASN.mmdb and GeoLite2-City.mmdb files. Follow the instructions to obtain these files here: https://dev.maxmind.com/geoip/updating-databases
 
 Currently, `geoipsed` looks exclusively to `/usr/share/GeoIP` for the mmdb files, however you can override this with the `-I` command line option or the environment variable `MAXMIND_MMDB_DIR`.
 
