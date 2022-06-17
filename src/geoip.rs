@@ -127,11 +127,13 @@ impl GeoIPSed {
                     country_full = n.get("en").unwrap_or(&"");
                 }
             }
-            //country = cityrecord.country.and_then(|c| c.iso_code).unwrap_or("");
+            
+            // get city name, hard coded for en language currently
             city = match cityrecord.city.and_then(|c| c.names) {
                 Some(names) => names.get("en").unwrap_or(&""),
                 None => "",
             };
+            
             // pull out location specific fields
             if let Some(locrecord) = cityrecord.location {
                 timezone = locrecord.time_zone.unwrap_or("");
