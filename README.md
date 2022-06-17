@@ -67,6 +67,25 @@ Available template geoip field names are:
 {timezone}
 ```
 
+## Benchmark
+Comparing the Rust implementation to a basic Python version against 30,000 lines (~23MB decompressed) of Suricata json eve logs:
+
+```
+Benchmark 1: zstdcat ../30k.log.zst | target/release/geoipsed
+  Time (mean ± σ):     157.1 ms ±  16.7 ms    [User: 167.8 ms, System: 28.9 ms]
+  Range (min … max):   137.1 ms … 209.9 ms    21 runs
+ 
+Benchmark 2: zstdcat ../30k.log.zst | python python/geoipsed.py
+  Time (mean ± σ):     15.209 s ±  0.929 s    [User: 15.213 s, System: 0.210 s]
+  Range (min … max):   14.312 s … 17.076 s    10 runs
+ 
+Summary
+  'zstdcat ../30k.log.zst | target/release/geoipsed' ran
+   96.80 ± 11.84 times faster than 'zstdcat ../30k.log.zst | python python/geoipsed.py'
+```
+
+* *Note* that a significant factor of this speed difference is the regular expression matching, specifically the IPv6 pattern. If you match just on IPv4, it was only ~5x faster.
+
 ## Background & Gratitude
 * The historical inspiration for geoipsed was when a sensei taught me long ago that perl's `s/find/replace/g` sed interface can interpret the replace pattern as a perl expression! For example, decoding hexascii, xor'ing, and printing the characters: `perl -pe 's/%([a-f0-9]{2})/chr(hex($1)^0x5e)/ieg`. If I can run perl chr and hex functions, can I import geoip libraries, and run those functions? It turns out, yes! Thus geoipsed was born.
 
