@@ -18,6 +18,7 @@ pub mod geoip;
 
 const BUFFERSIZE: usize = 64 * 1024;
 
+// via https://github.com/sstadick/hck/blob/master/src/main.rs#L90
 /// Check if err is a broken pipe.
 #[inline]
 fn is_broken_pipe(err: &Error) -> bool {
