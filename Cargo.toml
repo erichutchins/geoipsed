@@ -1,0 +1,32 @@
+[package]
+name = "geoipsed"
+version = "0.1.0"
+edition = "2021"
+description = "Inline decoration of IPv4 and IPv6 address geolocations"
+authors = ["Eric Hutchins"]
+license = "Unlicense/MIT"
+repository = "https://github.com/erichutchins/geoipsed"
+readme = "README.md"
+categories = ["text-processing", "command-line-interface"]
+keywords = ["cli", "geoip", "dfir"]
+
+[[bin]]
+name = "geoipsed"
+path = "src/main.rs"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+[dependencies]
+anyhow = "1.0.57"
+camino = "1.0"
+clap = { version = "3.2", features = ["derive", "env", "unicode", "cargo"] }
+field_names = "0.2.0"
+grep-cli = "0.1.6"
+maxminddb = {version= "0.23.0", features= ["mmap"]}
+microtemplate = "1.0.3"
+regex = "1.5.6"
+ripline = "0.1.0"
+rustc-hash = "1.1.0"
+termcolor = "1.1.2"
