@@ -3,6 +3,12 @@ name = "geoipsed"
 version = "0.1.0"
 edition = "2021"
 description = "Inline decoration of IPv4 and IPv6 address geolocations"
+authors = ["Eric Hutchins"]
+license = "Unlicense/MIT"
+repository = "https://github.com/erichutchins/geoipsed"
+readme = "README.md"
+categories = ["text-processing", "command-line-interface"]
+keywords = ["cli", "geoip", "dfir"]
 
 [[bin]]
 name = "geoipsed"
