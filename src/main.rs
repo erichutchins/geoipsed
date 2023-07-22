@@ -1,6 +1,6 @@
 use anyhow::{Error, Result};
 use camino::Utf8PathBuf;
-use clap::{ArgEnum, Parser};
+use clap::{Parser, ValueEnum};
 use grep_cli::{self, stdout};
 use regex::bytes::Regex;
 use ripline::{
@@ -54,7 +54,7 @@ struct Args {
     only_matching: bool,
 
     /// Use markers to highlight the matching strings
-    #[clap(short = 'C', long, arg_enum, default_value_t = ArgsColorChoice::Auto)]
+    #[clap(short = 'C', long, value_enum, default_value_t = ArgsColorChoice::Auto)]
     color: ArgsColorChoice,
 
     /// Specify the format of the IP address decoration. Use the --list-templates option
@@ -77,7 +77,7 @@ struct Args {
     input: Vec<Utf8PathBuf>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, ArgEnum)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, ValueEnum)]
 enum ArgsColorChoice {
     Always,
     Never,
@@ -114,19 +114,20 @@ fn main() -> Result<()> {
     };
 
     // invoke the command!
-    if let Err(e) = if args.only_matching {
+    let invoke = if args.only_matching {
         run_onlymatching(args, colormode)
     } else {
         run(args, colormode)
-    } {
+    };
+
+    if let Err(ref e) = invoke {
         // safely ignore broken pipes, e.g. head
-        if is_broken_pipe(&e) {
+        if is_broken_pipe(e) {
             exit(0);
         }
-        return Err(e);
     }
 
-    Ok(())
+    invoke
 }
 
 #[inline]
