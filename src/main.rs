@@ -120,14 +120,10 @@ fn main() -> Result<()> {
         run(args, colormode)
     };
 
-    if let Err(ref e) = invoke {
-        // safely ignore broken pipes, e.g. head
-        if is_broken_pipe(e) {
-            exit(0);
-        }
+    match invoke {
+        Err(e) if is_broken_pipe(&e) => exit(0),
+        other => other,
     }
-
-    invoke
 }
 
 #[inline]
