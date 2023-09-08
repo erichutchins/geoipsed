@@ -1,0 +1,2 @@
+maxminddb==2.4.0
+geoip2==4.7.0

@@ -1,6 +1,6 @@
 [package]
 name = "geoipsed"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Inline decoration of IPv4 and IPv6 address geolocations"
 authors = ["Eric Hutchins"]
@@ -19,14 +19,14 @@ lto = "fat"
 codegen-units = 1
 
 [dependencies]
-anyhow = "1.0.57"
-camino = "1.0"
-clap = { version = "3.2", features = ["derive", "env", "unicode", "cargo"] }
+anyhow = "1.0.72"
+camino = "1.1.6"
+clap = { version = "4.3.15", features = ["derive", "env", "unicode", "cargo"] }
 field_names = "0.2.0"
-grep-cli = "0.1.6"
-maxminddb = {version= "0.23.0", features= ["mmap"]}
+grep-cli = "0.1.8"
+maxminddb = { version = "0.23.0", features = ["mmap"] }
 microtemplate = "1.0.3"
-regex = "1.5.6"
+regex = "1.9.1"
 ripline = "0.1.0"
 rustc-hash = "1.1.0"
-termcolor = "1.1.2"
+termcolor = "1.2.0"
