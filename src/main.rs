@@ -10,7 +10,7 @@ use ripline::{
 };
 use rustc_hash::FxHashMap as HashMap;
 use std::fs::File;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufReader, IsTerminal, Read, Write};
 use std::process::exit;
 use termcolor::ColorChoice;
 
@@ -103,7 +103,7 @@ fn main() -> Result<()> {
     // or otherwise don't color if it's to a file or another pipe
     let colormode = match args.color {
         ArgsColorChoice::Auto => {
-            if grep_cli::is_tty_stdout() {
+            if std::io::stdout().is_terminal() {
                 ColorChoice::Always
             } else {
                 ColorChoice::Never
