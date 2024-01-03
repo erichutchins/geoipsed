@@ -1,14 +1,15 @@
 [package]
 name = "geoipsed"
-version = "0.1.3"
-edition = "2021"
-description = "Inline decoration of IPv4 and IPv6 address geolocations"
+version = "0.1.3" #:version
 authors = ["Eric Hutchins"]
-license = "Unlicense/MIT"
+description = "Inline decoration of IPv4 and IPv6 address geolocations"
+homepage = "https://github.com/erichutchins/geoipsed"
 repository = "https://github.com/erichutchins/geoipsed"
 readme = "README.md"
 categories = ["text-processing", "command-line-interface"]
-keywords = ["cli", "geoip", "dfir"]
+keywords = ["cli", "geoip", "dfir", "regex"]
+license = "Unlicense OR MIT"
+edition = "2021"
 
 [[bin]]
 name = "geoipsed"
@@ -17,11 +18,16 @@ path = "src/main.rs"
 [profile.release]
 lto = "fat"
 codegen-units = 1
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
+panic = "abort"
+incremental = false
 
 [dependencies]
-anyhow = "1.0.72"
+anyhow = "1.0.79"
 camino = "1.1.6"
-clap = { version = "4.4.10", features = ["derive", "env", "unicode", "cargo"] }
+clap = { version = "4.4.12", features = ["derive", "env", "unicode", "cargo"] }
 field_names = "0.2.0"
 grep-cli = "0.1.10"
 maxminddb = { version = "0.23.0", features = ["mmap"] }
@@ -30,3 +36,6 @@ regex = "1.10.2"
 ripline = "0.1.0"
 rustc-hash = "1.1.0"
 termcolor = "1.4.0"
+
+[dev-dependencies]
+assert_cmd = "2.0"

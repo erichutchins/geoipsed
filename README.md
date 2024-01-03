@@ -22,10 +22,16 @@ In command line log analysis, IP geolocation metadata is most useful in *additio
 
 Currently, `geoipsed` looks exclusively to `/usr/share/GeoIP` for the mmdb files, however you can override this with the `-I` command line option or the environment variable `MAXMIND_MMDB_DIR`.
 
+Build and install with cargo:
+
+```
+cargo install --git https://github.com/erichutchins/geoipsed
+```
+
 ## Usage
 
 ```
-geoipsed 0.1.0
+geoipsed 0.1.3
 Inline decoration of IPv4 and IPv6 address geolocations
 
 USAGE:
