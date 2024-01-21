@@ -25,7 +25,7 @@ Currently, `geoipsed` looks exclusively to `/usr/share/GeoIP` for the mmdb files
 Build and install with cargo:
 
 ```
-cargo install --git https://github.com/erichutchins/geoipsed
+cargo install geoipsed
 ```
 
 ## Usage
