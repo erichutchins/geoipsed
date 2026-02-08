@@ -1,49 +1,33 @@
 use anyhow::{Error, Result};
 use camino::Utf8PathBuf;
 use clap::{Parser, ValueEnum};
-use grep_cli::{self, stdout};
-use regex::bytes::Regex;
-use ripline::{
-    line_buffer::{LineBufferBuilder, LineBufferReader},
-    lines::LineIter,
-    LineTerminator,
-};
 use rustc_hash::FxHashMap as HashMap;
-use std::fs::File;
-use std::io::{self, BufReader, IsTerminal, Read, Write};
-use std::process::exit;
-use termcolor::ColorChoice;
+use std::io::{self, IsTerminal, Write};
+use std::process::ExitCode;
+use termcolor::{ColorChoice, StandardStream};
 
+pub mod extractor;
+pub mod files;
 pub mod geoip;
+pub mod input;
+pub mod mmdb;
+pub mod tag;
 
-const BUFFERSIZE: usize = 64 * 1024;
+use input::FileOrStdin;
+use tag::{Tag, Tagged};
 
-// via https://github.com/sstadick/hck/blob/master/src/main.rs#L90
-/// Check if err is a broken pipe.
-#[inline]
+/// Check if the error chain contains a broken pipe error.
+#[inline(always)]
 fn is_broken_pipe(err: &Error) -> bool {
-    if let Some(io_err) = err.root_cause().downcast_ref::<io::Error>() {
-        if io_err.kind() == io::ErrorKind::BrokenPipe {
-            return true;
+    // Look for a broken pipe error in the error chain
+    for cause in err.chain() {
+        if let Some(io_err) = cause.downcast_ref::<io::Error>() {
+            if io_err.kind() == io::ErrorKind::BrokenPipe {
+                return true;
+            }
         }
     }
     false
-}
-
-// via https://github.com/sstadick/crabz/blob/main/src/main.rs#L82
-/// Get a buffered input reader from stdin or a file
-fn get_input(path: Option<Utf8PathBuf>) -> Result<Box<dyn Read + Send + 'static>> {
-    let reader: Box<dyn Read + Send + 'static> = match path {
-        Some(path) => {
-            if path.as_os_str() == "-" {
-                Box::new(BufReader::with_capacity(BUFFERSIZE, io::stdin()))
-            } else {
-                Box::new(BufReader::with_capacity(BUFFERSIZE, File::open(path)?))
-            }
-        }
-        None => Box::new(BufReader::with_capacity(BUFFERSIZE, io::stdin())),
-    };
-    Ok(reader)
 }
 
 #[derive(Parser, Debug)]
@@ -63,9 +47,50 @@ struct Args {
     #[clap(short, long)]
     template: Option<String>,
 
-    /// Specify directory containing GeoLite2-ASN.mmdb and GeoLite2-City.mmdb
-    #[clap(short = 'I', value_name = "DIR", value_hint = clap::ValueHint::DirPath, env = "MAXMIND_MMDB_DIR")]
+    /// Output matches as JSON with tag information for each line
+    #[clap(long, conflicts_with = "only_matching")]
+    tag: bool,
+
+    /// Output matches as JSON with tag information for entire files
+    #[clap(long, conflicts_with = "only_matching")]
+    tag_files: bool,
+
+    /// Include all types of IP addresses in matches
+    #[clap(long)]
+    all: bool,
+
+    /// Exclude private IP addresses from matches
+    #[clap(long)]
+    no_private: bool,
+
+    /// Exclude loopback IP addresses from matches
+    #[clap(long)]
+    no_loopback: bool,
+
+    /// Exclude broadcast/link-local IP addresses from matches
+    #[clap(long)]
+    no_broadcast: bool,
+
+    /// Only include internet-routable IP addresses (requires valid ASN entry)
+    #[clap(long)]
+    only_routable: bool,
+
+    /// Specify the MMDB provider to use (default: maxmind)
+    #[clap(long, value_name = "PROVIDER", default_value = "maxmind")]
+    provider: String,
+
+    /// Specify directory containing the MMDB database files
+    #[clap(
+        short = 'I',
+        value_name = "DIR",
+        value_hint = clap::ValueHint::DirPath,
+        env = "GEOIP_MMDB_DIR"
+    )]
     include: Option<Utf8PathBuf>,
+
+    /// List available MMDB providers and their required files
+    #[clap(long)]
+    list_providers: bool,
 
     /// Display a list of available template substitution parameters to
     /// use in --template format string
@@ -84,18 +109,75 @@ enum ArgsColorChoice {
     Auto,
 }
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
+    // Use a separate run function to handle the actual work
+    let err = match run_main() {
+        Ok(code) => return code,
+        Err(err) => err,
+    };
+
+    // Handle broken pipe errors gracefully
+    if is_broken_pipe(&err) {
+        return ExitCode::SUCCESS;
+    }
+
+    // Print detailed error information based on environment variables
+    if std::env::var("RUST_BACKTRACE").map_or(false, |v| v == "1")
+        && std::env::var("RUST_LIB_BACKTRACE").map_or(true, |v| v == "1")
+    {
+        writeln!(&mut std::io::stderr(), "{:?}", err).unwrap();
+    } else {
+        writeln!(&mut std::io::stderr(), "{:#}", err).unwrap();
+    }
+
+    ExitCode::FAILURE
+}
+
+fn run_main() -> Result<ExitCode> {
     let mut args = Args::parse();
+
+    // Create provider registry
+    let mut provider_registry = mmdb::ProviderRegistry::default();
+
+    // if user asks to list available providers
+    if args.list_providers {
+        let info = provider_registry.print_db_info()?;
+        println!("{}", info);
+        return Ok(ExitCode::SUCCESS);
+    }
 
     // if user asks to see available template names
     if args.list_templates {
-        geoip::print_ip_field_names();
-        return Ok(());
+        // Set the active provider first
+        provider_registry.set_active_provider(&args.provider)?;
+        provider_registry.initialize_active_provider(args.include.clone())?;
+
+        // Get and print available fields
+        let fields = provider_registry.available_fields()?;
+        println!(
+            "Available template fields for provider '{}':",
+            args.provider
+        );
+        for field in fields {
+            println!(
+                "{{{}}}\t{}\t(example: {})",
+                field.name, field.description, field.example
+            );
+        }
+        return Ok(ExitCode::SUCCESS);
     }
 
     // if no files specified, add stdin
     if args.input.is_empty() {
         args.input.push(Utf8PathBuf::from("-"));
+    }
+
+    // Check for legacy MAXMIND_MMDB_DIR environment variable if no include path is specified
+    if args.include.is_none() {
+        if let Ok(legacy_path) = std::env::var("MAXMIND_MMDB_DIR") {
+            args.include = Some(Utf8PathBuf::from(legacy_path));
+            eprintln!("Warning: MAXMIND_MMDB_DIR is deprecated, please use GEOIP_MMDB_DIR instead");
+        }
     }
 
     // determine appropriate colormode. auto simply
@@ -113,96 +195,137 @@ fn main() -> Result<()> {
         ArgsColorChoice::Never => ColorChoice::Never,
     };
 
-    // invoke the command!
-    let invoke = if args.only_matching {
-        run_onlymatching(args, colormode)
-    } else {
-        run(args, colormode)
-    };
+    // Process each input file
+    run(args, colormode)?;
 
-    match invoke {
-        Err(e) if is_broken_pipe(&e) => exit(0),
-        other => other,
-    }
+    Ok(ExitCode::SUCCESS)
 }
 
-#[inline]
+#[inline(always)]
 fn run(args: Args, colormode: ColorChoice) -> Result<()> {
-    let geoipdb = geoip::GeoIPSed::new(args.include, args.template, colormode);
-    let re = Regex::new(geoip::REGEX_PATTERN).unwrap();
-    let mut out = stdout(colormode);
-    let mut cache: HashMap<String, String> = HashMap::default();
+    // Determine which IP types to include
+    let include_private = args.all || !args.no_private;
+    let include_loopback = args.all || !args.no_loopback;
+    let include_broadcast = args.all || !args.no_broadcast;
+
+    let geoipdb = geoip::GeoIPSed::new(
+        args.include.clone(),
+        args.template.clone(),
+        colormode,
+        args.only_routable,
+    )?;
+
+    // Build the IP extractor with appropriate settings
+    let extractor = extractor::ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .private_ips(include_private)
+        .loopback_ips(include_loopback)
+        .broadcast_ips(include_broadcast)
+        .only_routable(args.only_routable)
+        .build()?;
+
+    let mut out = StandardStream::stdout(colormode);
+
+    // Handle file-based tagging mode
+    if args.tag_files {
+        // Process each file as a whole rather than line by line
+        files::tag_files(&args.input, &extractor, &mut out)?;
+        out.flush()?;
+        return Ok(());
+    }
+
+    // Use a larger initial capacity for cache to reduce rehashing
+    let mut cache: HashMap<String, String> =
+        HashMap::with_capacity_and_hasher(4096, Default::default());
+    let only_matching = args.only_matching;
+    let tag_mode = args.tag;
+
+    // Pre-allocate buffer for UTF-8 conversion of IP addresses
+    let mut ip_buffer = String::with_capacity(128);
 
     for path in args.input {
-        let reader = get_input(Some(path))?;
-        let terminator = LineTerminator::byte(b'\n');
-        let mut line_buffer = LineBufferBuilder::new().build();
-        let mut lb_reader = LineBufferReader::new(reader, &mut line_buffer);
-        let mut _lastpos: usize = 0;
+        let input = FileOrStdin::from_path(path);
+        let mut reader = input.reader()?;
 
-        // line reader
-        while lb_reader.fill()? {
-            let lines = LineIter::new(terminator.as_byte(), lb_reader.buffer());
-            for line in lines {
-                _lastpos = 0;
-                for m in re.find_iter(line) {
-                    let ipstr = String::from_utf8(m.as_bytes().to_vec())
-                        .unwrap_or_else(|_| "decode error".into());
-                    // lookup ip in cache or decorate if new
-                    let decorated: &str = cache
-                        .entry(ipstr)
-                        .or_insert_with_key(|key| geoipdb.lookup(key));
+        // Process each line with a fast path for unmodified lines
+        reader.for_byte_line(|line| {
+            let haystack = line.content();
+            if only_matching {
+                // Only matching mode: just output each IP on its own line
+                for range in extractor.find_iter(haystack) {
+                    ip_buffer.clear(); // Reuse buffer
+                    let ipstr = match std::str::from_utf8(&haystack[range.clone()]) {
+                        Ok(s) => {
+                            ip_buffer.push_str(s);
+                            &ip_buffer
+                        }
+                        Err(_) => "decode error",
+                    };
 
-                    // print gap from last match to current match
-                    out.write_all(&line[_lastpos..m.start()])?;
-                    // print decorated ip
+                    // Avoid cloning when inserting into cache
+                    let decorated = cache
+                        .entry(ipstr.to_string())
+                        .or_insert_with(|| geoipdb.lookup(ipstr));
+
+                    // Write the decorated IP and a newline
                     out.write_all(decorated.as_bytes())?;
-                    _lastpos = m.end();
+                    out.write_all(b"\n")?;
                 }
-                // add trailing...(or entire line in case of no matches)
-                out.write_all(&line[_lastpos..])?;
+            } else {
+                // Build tags for all matches - fast path for no tag mode
+                if !tag_mode && extractor.find_iter(haystack).count() == 0 {
+                    // Fast path - no matches, just write the line as is
+                    out.write_all(line.full())?;
+                    return Ok(true);
+                }
+
+                let mut tagged = Tagged::new(line.full());
+
+                // Process all matches
+                for range in extractor.find_iter(haystack) {
+                    ip_buffer.clear(); // Reuse buffer
+                    let ipstr = if let Ok(s) = std::str::from_utf8(&haystack[range.clone()]) {
+                        ip_buffer.push_str(s);
+                        ip_buffer.clone()
+                    } else {
+                        "decode error".to_string()
+                    };
+
+                    if tag_mode {
+                        // In tag mode, just store the original IP and its range
+                        tagged = tagged.tag(Tag::new(ipstr).with_range(range));
+                    } else {
+                        // Direct lookup with ownership transfer to reduce allocations
+                        let decorated = cache
+                            .entry(ipstr.clone())
+                            .or_insert_with(|| geoipdb.lookup(&ipstr))
+                            .clone();
+
+                        // Add the tag with its decoration
+                        tagged = tagged
+                            .tag(Tag::new(ipstr).with_range(range).with_decoration(decorated));
+                    }
+                }
+
+                // Write output based on mode
+                if tag_mode {
+                    // Write as JSON in tag mode
+                    if !tagged.tags().is_empty() {
+                        let mut tagged = tagged; // Make mutable for write_json
+                        tagged.write_json(&mut out)?;
+                        out.write_all(b"\n")?;
+                    }
+                } else {
+                    // Write decorated text in normal mode
+                    tagged.write(&mut out)?;
+                }
             }
-            lb_reader.consume_all();
-        }
+
+            Ok(true)
+        })?;
         out.flush()?;
     }
-    Ok(())
-}
 
-#[inline]
-fn run_onlymatching(args: Args, colormode: ColorChoice) -> Result<()> {
-    let geoipdb = geoip::GeoIPSed::new(args.include, args.template, colormode);
-    let re = Regex::new(geoip::REGEX_PATTERN).unwrap();
-    let mut out = stdout(colormode);
-    let mut cache: HashMap<String, String> = HashMap::default();
-
-    for path in args.input {
-        let reader = get_input(Some(path))?;
-        let terminator = LineTerminator::byte(b'\n');
-        let mut line_buffer = LineBufferBuilder::new().build();
-        let mut lb_reader = LineBufferReader::new(reader, &mut line_buffer);
-
-        // line reader
-        while lb_reader.fill()? {
-            let lines = LineIter::new(terminator.as_byte(), lb_reader.buffer());
-            for line in lines {
-                for m in re.find_iter(line) {
-                    let ipstr = String::from_utf8(m.as_bytes().to_vec())
-                        .unwrap_or_else(|_| "decode error".into());
-                    // lookup ip in cache or decorate if new
-                    let decorated: &str = cache
-                        .entry(ipstr)
-                        .or_insert_with_key(|key| geoipdb.lookup(key));
-
-                    // *only* print decorated ip
-                    out.write_all(decorated.as_bytes())?;
-                    // and a newline
-                    out.write_all(&[b'\n'])?;
-                }
-            }
-            lb_reader.consume_all();
-        }
-        out.flush()?;
-    }
     Ok(())
 }
