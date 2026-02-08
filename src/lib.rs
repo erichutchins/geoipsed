@@ -33,6 +33,7 @@
 //! register_mmdb_provider!(registry, "mycustom", provider);
 //! ```
 
+pub mod error;
 pub mod extractor;
 pub mod files;
 pub mod geoip;
@@ -42,4 +43,5 @@ pub mod tag;
 pub mod template;
 
 /// Re-export key traits for custom MMDB format support
+pub use crate::error::Error;
 pub use crate::mmdb::{MmdbProvider, ProviderRegistry, TemplateField};

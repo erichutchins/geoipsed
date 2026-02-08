@@ -47,6 +47,7 @@ serde_json = "1.0.140"
 rustc-hash = "1.1.0"
 hashbrown = "0.16"
 termcolor = "1.4.1"
+thiserror = "2"
 
 [dependencies.regex-automata]
 # Mimicking burntsushi's biff: https://github.com/BurntSushi/biff/blob/master/Cargo.toml
