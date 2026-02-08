@@ -18,7 +18,7 @@ pub struct Tag {
 
 impl Tag {
     /// Create a new tag for an IP address.
-    #[inline(always)]
+    #[inline]
     pub fn new<S: Into<String>>(ip: S) -> Tag {
         Tag {
             ip: ip.into(),
@@ -28,33 +28,33 @@ impl Tag {
     }
 
     /// Set the range of this tag in the original text.
-    #[inline(always)]
+    #[inline]
     pub fn with_range(mut self, range: Range<usize>) -> Self {
         self.range = Some(range);
         self
     }
 
     /// Set the decorated version of this IP.
-    #[inline(always)]
+    #[inline]
     pub fn with_decoration<S: Into<String>>(mut self, decorated: S) -> Self {
         self.decorated = Some(decorated.into());
         self
     }
 
     /// Get the IP address text.
-    #[inline(always)]
+    #[inline]
     pub fn ip(&self) -> &str {
         &self.ip
     }
 
     /// Get the range of this tag in the original text, if available.
-    #[inline(always)]
+    #[inline]
     pub fn range(&self) -> Option<&Range<usize>> {
         self.range.as_ref()
     }
 
     /// Get the decorated version of this IP, if available.
-    #[inline(always)]
+    #[inline]
     pub fn decorated(&self) -> Option<&str> {
         self.decorated.as_deref()
     }
@@ -82,7 +82,7 @@ pub struct TextData {
 
 impl Tagged {
     /// Create a new tagged text.
-    #[inline(always)]
+    #[inline]
     pub fn new(text: &[u8]) -> Tagged {
         // Pre-allocate a reasonable capacity for tags based on text length
         let capacity = if text.len() > 1000 { 16 } else { 4 };
@@ -94,20 +94,20 @@ impl Tagged {
     }
 
     /// Add a tag to this text.
-    #[inline(always)]
+    #[inline]
     pub fn tag(mut self, tag: Tag) -> Self {
         self.tags.push(tag);
         self
     }
 
     /// Get the tags in this text.
-    #[inline(always)]
+    #[inline]
     pub fn tags(&self) -> &[Tag] {
         &self.tags
     }
 
     /// Get the original text.
-    #[inline(always)]
+    #[inline]
     pub fn text(&self) -> &[u8] {
         &self.text
     }
@@ -119,7 +119,7 @@ impl Tagged {
     }
 
     /// Write the tagged text to a writer, replacing the IP addresses with their decorated versions.
-    #[inline(always)]
+    #[inline]
     pub fn write<W: Write>(&self, wtr: &mut W) -> io::Result<()> {
         // Fast path for no tags
         if self.tags.is_empty() {
@@ -180,59 +180,31 @@ impl Tagged {
             }
         }
 
-        // For multiple tags, avoid cloning and sorting if possible
-        let mut last_end = 0;
-
-        // Check if tags are already sorted (common case in sequential parsing)
-        let mut is_sorted = true;
-        let mut prev_start = 0;
-
-        for tag in &self.tags {
-            if let Some(range) = tag.range() {
-                if range.start < prev_start {
-                    is_sorted = false;
-                    break;
+        // For multiple tags, process them in order
+        // Tags should always be sorted by position since the extractor finds matches left-to-right
+        #[cfg(debug_assertions)]
+        {
+            for i in 1..self.tags.len() {
+                if let (Some(prev), Some(curr)) = (self.tags[i - 1].range(), self.tags[i].range()) {
+                    debug_assert!(prev.start <= curr.start, "Tags must be sorted by position");
                 }
-                prev_start = range.start;
             }
         }
 
-        // Fast path for already sorted tags
-        if is_sorted {
-            for tag in &self.tags {
-                if let Some(range) = tag.range() {
-                    // Write the text between the previous tag and this one
-                    wtr.write_all(&self.text[last_end..range.start])?;
+        let mut last_end = 0;
+        for tag in &self.tags {
+            if let Some(range) = tag.range() {
+                // Write the text between the previous tag and this one
+                wtr.write_all(&self.text[last_end..range.start])?;
 
-                    // Write the decorated version if available, or the original IP
-                    if let Some(decorated) = tag.decorated() {
-                        wtr.write_all(decorated.as_bytes())?;
-                    } else {
-                        wtr.write_all(&self.text[range.clone()])?;
-                    }
-
-                    last_end = range.end;
+                // Write the decorated version if available, or the original IP
+                if let Some(decorated) = tag.decorated() {
+                    wtr.write_all(decorated.as_bytes())?;
+                } else {
+                    wtr.write_all(&self.text[range.clone()])?;
                 }
-            }
-        } else {
-            // For unsorted tags, sort them by position
-            let mut sorted_tags = self.tags.clone();
-            sorted_tags.sort_by_key(|tag| tag.range().map(|r| r.start).unwrap_or(usize::MAX));
 
-            for tag in &sorted_tags {
-                if let Some(range) = tag.range() {
-                    // Write the text between the previous tag and this one
-                    wtr.write_all(&self.text[last_end..range.start])?;
-
-                    // Write the decorated version if available, or the original IP
-                    if let Some(decorated) = tag.decorated() {
-                        wtr.write_all(decorated.as_bytes())?;
-                    } else {
-                        wtr.write_all(&self.text[range.clone()])?;
-                    }
-
-                    last_end = range.end;
-                }
+                last_end = range.end;
             }
         }
 
@@ -245,7 +217,7 @@ impl Tagged {
     }
 
     /// Write the tagged text as JSON to a writer.
-    #[inline(always)]
+    #[inline]
     pub fn write_json<W: Write + ?Sized>(&mut self, wtr: &mut W) -> io::Result<()> {
         // Set the text data for JSON serialization
         if self.text_data.is_none() {

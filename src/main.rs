@@ -123,7 +123,7 @@ fn main() -> ExitCode {
     }
 
     // Print detailed error information based on environment variables
-    if std::env::var("RUST_BACKTRACE").map_or(false, |v| v == "1")
+    if std::env::var("RUST_BACKTRACE").is_ok_and(|v| v == "1")
         && std::env::var("RUST_LIB_BACKTRACE").map_or(true, |v| v == "1")
     {
         writeln!(&mut std::io::stderr(), "{:?}", err).unwrap();
@@ -258,10 +258,8 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
             if only_matching {
                 // Only matching mode: just output each IP on its own line
                 for range in extractor.find_iter(haystack) {
-                    let ipstr = match std::str::from_utf8(&haystack[range.clone()]) {
-                        Ok(s) => s,
-                        Err(_) => "decode error",
-                    };
+                    let ipstr =
+                        std::str::from_utf8(&haystack[range.clone()]).unwrap_or("decode error");
 
                     // Check cache first, avoiding allocation on hit
                     if let Some(cached) = cache.get(ipstr) {
@@ -282,11 +280,8 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                 // Process all matches
                 for range in extractor.find_iter(haystack) {
                     has_matches = true;
-                    let ipstr = if let Ok(s) = std::str::from_utf8(&haystack[range.clone()]) {
-                        s
-                    } else {
-                        "decode error"
-                    };
+                    let ipstr =
+                        std::str::from_utf8(&haystack[range.clone()]).unwrap_or("decode error");
 
                     if tag_mode {
                         // In tag mode, just store the original IP and its range

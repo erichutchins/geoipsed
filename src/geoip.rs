@@ -118,7 +118,7 @@ impl GeoIPSed {
         })
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn lookup(&self, s: &str) -> String {
         // Try to use the provider registry if available
         if let Some(registry) = &self.provider_registry {

@@ -97,6 +97,31 @@ pub enum InputReader {
     Stdin(BufReader<io::Stdin>),
 }
 
+impl BufRead for InputReader {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        match self {
+            InputReader::File(ref mut rdr) => rdr.fill_buf(),
+            InputReader::Stdin(ref mut rdr) => rdr.fill_buf(),
+        }
+    }
+
+    fn consume(&mut self, amt: usize) {
+        match self {
+            InputReader::File(ref mut rdr) => rdr.consume(amt),
+            InputReader::Stdin(ref mut rdr) => rdr.consume(amt),
+        }
+    }
+}
+
+impl Read for InputReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            InputReader::File(ref mut rdr) => rdr.read(buf),
+            InputReader::Stdin(ref mut rdr) => rdr.read(buf),
+        }
+    }
+}
+
 impl InputReader {
     /// Process each byte line from the input.
     ///
@@ -110,11 +135,9 @@ impl InputReader {
         let mut buf = Vec::with_capacity(1024);
         loop {
             buf.clear();
-            let n = match self {
-                InputReader::File(ref mut rdr) => rdr.read_until(b'\n', &mut buf),
-                InputReader::Stdin(ref mut rdr) => rdr.read_until(b'\n', &mut buf),
-            };
-            let n = n.context("failed to read line")?;
+            let n = self
+                .read_until(b'\n', &mut buf)
+                .context("failed to read line")?;
             if n == 0 {
                 break;
             }
@@ -129,14 +152,7 @@ impl InputReader {
     /// Read the entire input into a string.
     pub fn read_to_string(&mut self) -> Result<String> {
         let mut buf = String::new();
-        match self {
-            InputReader::File(ref mut rdr) => rdr
-                .read_to_string(&mut buf)
-                .context("failed to read file")?,
-            InputReader::Stdin(ref mut rdr) => rdr
-                .read_to_string(&mut buf)
-                .context("failed to read from stdin")?,
-        };
+        Read::read_to_string(self, &mut buf).context("failed to read input")?;
         Ok(buf)
     }
 }

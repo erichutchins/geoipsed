@@ -274,17 +274,6 @@ impl MmdbProvider for MaxMindProvider {
         // Parse the IP address
         let ip: IpAddr = ip_str.parse().context("Invalid IP address")?;
 
-        // Set up default values
-        let asnnum: String;
-        let asnorg: String;
-        let city: String;
-        let continent: String;
-        let country_iso: String;
-        let country_full: String;
-        let latitude: String;
-        let longitude: String;
-        let timezone: String;
-
         // Choose the appropriate reader based on IP version
         let is_ipv4 = matches!(ip, IpAddr::V4(_));
 
@@ -322,12 +311,12 @@ impl MmdbProvider for MaxMindProvider {
             }
         }
 
-        asnnum = if asn_num_val == 0 {
+        let asnnum = if asn_num_val == 0 {
             "0".to_string()
         } else {
             asn_num_val.to_string()
         };
-        asnorg = asn_org_val.to_string();
+        let asnorg = asn_org_val.to_string();
 
         // Get City/Country information
         let mut continent_val = "";
@@ -379,17 +368,17 @@ impl MmdbProvider for MaxMindProvider {
             }
         }
 
-        continent = continent_val.to_string();
-        country_iso = country_iso_val.to_string();
-        country_full = country_full_val.to_string();
-        city = city_val.to_string();
-        timezone = timezone_val.to_string();
-        latitude = if lat_val == 0.0 {
+        let continent = continent_val.to_string();
+        let country_iso = country_iso_val.to_string();
+        let country_full = country_full_val.to_string();
+        let city = city_val.to_string();
+        let timezone = timezone_val.to_string();
+        let latitude = if lat_val == 0.0 {
             "0.0".to_string()
         } else {
             lat_val.to_string()
         };
-        longitude = if lon_val == 0.0 {
+        let longitude = if lon_val == 0.0 {
             "0.0".to_string()
         } else {
             lon_val.to_string()
