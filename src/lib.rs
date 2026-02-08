@@ -39,6 +39,7 @@ pub mod geoip;
 pub mod input;
 pub mod mmdb;
 pub mod tag;
+pub mod template;
 
 /// Re-export key traits for custom MMDB format support
 pub use crate::mmdb::{MmdbProvider, ProviderRegistry, TemplateField};
