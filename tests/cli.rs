@@ -189,7 +189,7 @@ fn extract_ip_only() {
 "#;
     let expected_output = r#"
 <81.2.69.205|AS0_|GB|London>
-<89.160.20.188|AS0_|SE|Linköping>
+<89.160.20.188|AS29518_Bredband2_AB|SE|Linköping>
 <175.16.199.52|AS0_|CN|Changchun>
 "#
     .trim_start_matches('\n');

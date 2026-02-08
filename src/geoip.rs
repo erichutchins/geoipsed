@@ -1,23 +1,12 @@
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
-use field_names::FieldNames;
 use maxminddb::geoip2;
 use maxminddb::Mmap;
-use microtemplate::{render, Substitutions};
-use rustc_hash::FxHashMap;
-use std::cell::RefCell;
 use std::net::IpAddr;
-use std::thread_local;
 use termcolor::ColorChoice;
 
 use crate::mmdb::ProviderRegistry;
-
-// Thread-local cache for IP lookups
-thread_local! {
-    static IP_CACHE: RefCell<FxHashMap<String, String>> = RefCell::new(
-        FxHashMap::with_capacity_and_hasher(1024, Default::default())
-    );
-}
+use crate::template::Template;
 
 // Database paths
 const DEFAULT_MMDB_PATH: &str = "/usr/share/GeoIP";
@@ -26,22 +15,6 @@ const CITY_DB_FILENAME: &str = "GeoLite2-City.mmdb";
 
 // Default template format
 const DEFAULT_TEMPLATE: &str = "<{ip}|AS{asnnum}_{asnorg}|{country_iso}|{city}>";
-
-/// A simple struct to hold IP information purely to enable
-/// templated output customizations. All fields must be str
-#[derive(Substitutions, FieldNames)]
-struct IPInfo<'a> {
-    ip: &'a str,
-    asnnum: &'a str,
-    asnorg: &'a str,
-    city: &'a str,
-    continent: &'a str,
-    country_iso: &'a str,
-    country_full: &'a str,
-    latitude: &'a str,
-    longitude: &'a str,
-    timezone: &'a str,
-}
 
 // Constants for default field values
 const EMPTY_STR: &str = "";
@@ -52,32 +25,9 @@ pub struct GeoIPSed {
     asnreader: maxminddb::Reader<Mmap>,
     cityreader: maxminddb::Reader<Mmap>,
     pub color: ColorChoice,
-    pub template: String,
+    template: Template,
     pub only_routable: bool,
     pub provider_registry: Option<ProviderRegistry>,
-}
-
-impl Default for GeoIPSed {
-    fn default() -> Self {
-        let mmdb_path = Utf8PathBuf::from(DEFAULT_MMDB_PATH);
-
-        // Attempt to open the ASN database
-        let asnreader = maxminddb::Reader::open_mmap(mmdb_path.join(ASN_DB_FILENAME))
-            .expect("Could not read GeoLite2-ASN.mmdb");
-
-        // Attempt to open the City database
-        let cityreader = maxminddb::Reader::open_mmap(mmdb_path.join(CITY_DB_FILENAME))
-            .expect("Could not read GeoLite2-City.mmdb");
-
-        Self {
-            asnreader,
-            cityreader,
-            color: ColorChoice::Auto,
-            template: DEFAULT_TEMPLATE.to_string(),
-            only_routable: false,
-            provider_registry: None,
-        }
-    }
 }
 
 impl GeoIPSed {
@@ -88,31 +38,28 @@ impl GeoIPSed {
         only_routable: bool,
     ) -> Result<Self> {
         let dbpath = mmdbpath.unwrap_or_else(|| Utf8PathBuf::from(DEFAULT_MMDB_PATH));
-        let mut template = user_template.unwrap_or_else(|| DEFAULT_TEMPLATE.to_string());
+        let mut template_str = user_template.unwrap_or_else(|| DEFAULT_TEMPLATE.to_string());
 
         if color == ColorChoice::Always {
             // if we are printing color, bookend the template with ansi red escapes
-            template = format!("\x1b[1;31m{}\x1b[0;0m", template);
+            template_str = format!("\x1b[1;31m{}\x1b[0;0m", template_str);
         }
 
-        // Fall back to regular open if no test files found
+        // Compile the template once during initialization
+        let template = Template::compile(&template_str)
+            .map_err(|e| anyhow::anyhow!("Invalid template: {}", e))?;
+
+        // Open database files
         let asn_path = dbpath.join(ASN_DB_FILENAME);
         let city_path = dbpath.join(CITY_DB_FILENAME);
 
-        // In tests, handle missing files gracefully
-        let asnreader = maxminddb::Reader::open_mmap(&asn_path).unwrap_or_else(|_| {
-            maxminddb::Reader::open_mmap(&city_path)
-                .unwrap_or_else(|_| panic!("Could not open any MMDB files for testing"))
-        });
+        // Open ASN database
+        let asnreader = maxminddb::Reader::open_mmap(&asn_path)
+            .with_context(|| format!("Failed to open ASN database at {}", asn_path))?;
 
-        // For tests, we need to try to open the database file again
-        // Instead of cloning (which is not supported), we reopen the file
-        let cityreader = maxminddb::Reader::open_mmap(&asn_path).unwrap_or_else(|_| {
-            // Try city path if asn path failed
-            let city_path = dbpath.join(CITY_DB_FILENAME);
-            maxminddb::Reader::open_mmap(&city_path)
-                .unwrap_or_else(|_| panic!("Could not open any MMDB files for testing"))
-        });
+        // Open City database
+        let cityreader = maxminddb::Reader::open_mmap(&city_path)
+            .with_context(|| format!("Failed to open City database at {}", city_path))?;
 
         Ok(Self {
             asnreader,
@@ -132,7 +79,7 @@ impl GeoIPSed {
         only_routable: bool,
         provider_registry: ProviderRegistry,
     ) -> Result<Self> {
-        let template = if color == ColorChoice::Always {
+        let template_str = if color == ColorChoice::Always {
             // if we are printing color, bookend the template with ansi red escapes
             format!(
                 "\x1b[1;31m{}\x1b[0;0m",
@@ -141,6 +88,10 @@ impl GeoIPSed {
         } else {
             user_template.unwrap_or_else(|| DEFAULT_TEMPLATE.to_string())
         };
+
+        // Compile the template once during initialization
+        let template = Template::compile(&template_str)
+            .map_err(|e| anyhow::anyhow!("Invalid template: {}", e))?;
 
         // For backwards compatibility, we still need the original readers
         let dbpath = mmdbpath
@@ -169,36 +120,17 @@ impl GeoIPSed {
 
     #[inline(always)]
     pub fn lookup(&self, s: &str) -> String {
-        // Check cache first for fast lookup
-        let cached = IP_CACHE.with(|cache| {
-            let cache = cache.borrow();
-            cache.get(s).cloned()
-        });
-
-        if let Some(cached) = cached {
-            return cached;
-        }
-
         // Try to use the provider registry if available
         if let Some(registry) = &self.provider_registry {
             // Only proceed with valid IPs
             if let Ok(_ip) = s.parse::<IpAddr>() {
                 // Check routability if needed
                 if self.only_routable && !registry.has_asn(s) {
-                    let result = s.to_string();
-                    // Cache the result
-                    IP_CACHE.with(|cache| {
-                        cache.borrow_mut().insert(s.to_string(), result.clone());
-                    });
-                    return result;
+                    return s.to_string();
                 }
 
                 // Use the provider registry for lookup
-                if let Ok(result) = registry.lookup(s, &self.template) {
-                    // Cache the result for future lookups
-                    IP_CACHE.with(|cache| {
-                        cache.borrow_mut().insert(s.to_string(), result.clone());
-                    });
+                if let Ok(result) = registry.lookup(s, &self.template.to_string()) {
                     return result;
                 }
             }
@@ -217,16 +149,10 @@ impl GeoIPSed {
         if self.only_routable {
             // Try to fetch ASN info to check if routable - just do a quick lookup
             if self.asnreader.lookup::<geoip2::Asn>(ip).is_err() {
-                let result = s.to_string();
-                // Cache the result
-                IP_CACHE.with(|cache| {
-                    cache.borrow_mut().insert(s.to_string(), result.clone());
-                });
-                return result;
+                return s.to_string();
             }
         }
 
-        // Use pre-allocated strings for default values to reduce allocations
         // Initialize all fields with default values
         let mut asnnum: u32 = 0;
         let mut asnorg: &str = EMPTY_STR;
@@ -276,52 +202,41 @@ impl GeoIPSed {
             };
         }
 
-        // Use static strings for numeric values
+        // Convert numeric fields to strings
         let asnnum_str = if asnnum == 0 {
             ZERO_STR
         } else {
-            // Pre-allocate a buffer for the ASN number to avoid allocation during render
-            let asnnum_string = asnnum.to_string();
-            Box::leak(asnnum_string.into_boxed_str())
+            &asnnum.to_string()
         };
 
         let lat_str = if latitude == 0.0 {
             ZERO_FLOAT_STR
         } else {
-            // Pre-allocate for latitude
-            let lat_string = latitude.to_string();
-            Box::leak(lat_string.into_boxed_str())
+            &latitude.to_string()
         };
 
         let lon_str = if longitude == 0.0 {
             ZERO_FLOAT_STR
         } else {
-            // Pre-allocate for longitude
-            let lon_string = longitude.to_string();
-            Box::leak(lon_string.into_boxed_str())
+            &longitude.to_string()
         };
 
-        // Create IPInfo struct for template substitution
-        let ipinfo = IPInfo {
-            ip: s,
-            asnnum: asnnum_str,
-            asnorg,
-            city,
-            continent,
-            country_iso,
-            country_full,
-            latitude: lat_str,
-            longitude: lon_str,
-            timezone,
-        };
-
-        // Apply template and replace spaces with underscores
-        let result = render(&self.template, ipinfo).replace(' ', "_");
-
-        // Cache the result for future lookups
-        IP_CACHE.with(|cache| {
-            cache.borrow_mut().insert(s.to_string(), result.clone());
+        // Render the template using closure-based lookup
+        let result = self.template.render(|field| match field {
+            "ip" => s,
+            "asnnum" => asnnum_str,
+            "asnorg" => asnorg,
+            "city" => city,
+            "continent" => continent,
+            "country_iso" => country_iso,
+            "country_full" => country_full,
+            "latitude" => lat_str,
+            "longitude" => lon_str,
+            "timezone" => timezone,
+            _ => EMPTY_STR,
         });
-        result
+
+        // Replace spaces with underscores
+        result.replace(' ', "_")
     }
 }
