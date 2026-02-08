@@ -8,6 +8,39 @@ use crate::extractor::Extractor;
 use crate::input::FileOrStdin;
 use crate::tag::{Tag, Tagged, TextData};
 
+/// Helper function to tag content and write as JSON.
+///
+/// This function extracts all IP addresses from the content and outputs them as JSON tags.
+fn tag_content(content: &[u8], extractor: &Extractor, output: &mut dyn Write) -> Result<()> {
+    // Create a tagged object for the content
+    let mut tagged = Tagged::new(content);
+
+    // Find all IP addresses in the content
+    for range in extractor.find_iter(content) {
+        let ip_slice = &content[range.clone()];
+        let ip_str = std::str::from_utf8(ip_slice)
+            .context("Invalid UTF-8 in IP address")?
+            .to_string();
+
+        // Add the tag with its range
+        tagged = tagged.tag(Tag::new(ip_str).with_range(range));
+    }
+
+    // Only output if we found matches
+    if !tagged.tags().is_empty() {
+        // Set the text data explicitly - use lossy conversion for non-UTF8 text
+        let text_str = String::from_utf8_lossy(content).to_string();
+        let mut tagged = tagged;
+        tagged.set_text_data(TextData { text: text_str });
+
+        // Write as JSON
+        tagged.write_json(output)?;
+        writeln!(output)?;
+    }
+
+    Ok(())
+}
+
 /// Process a file and extract IP addresses as tags.
 ///
 /// This function reads the entire file content and extracts all IP addresses,
@@ -19,31 +52,7 @@ pub fn tag_file(path: &Path, extractor: &Extractor, output: &mut dyn Write) -> R
     file.read_to_end(&mut content)
         .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
-    // Create a tagged object for the whole file
-    let mut tagged = Tagged::new(&content);
-
-    // Find all IP addresses in the file
-    for range in extractor.find_iter(&content) {
-        let ip_slice = &content[range.clone()];
-        let ip_str = String::from_utf8_lossy(ip_slice).to_string();
-
-        // Add the tag with its range
-        tagged = tagged.tag(Tag::new(ip_str).with_range(range));
-    }
-
-    // Only output if we found matches
-    if !tagged.tags().is_empty() {
-        // Set the text data explicitly
-        let text_str = String::from_utf8_lossy(&content).to_string();
-        let mut tagged = tagged;
-        tagged.set_text_data(TextData { text: text_str });
-
-        // Write as JSON
-        tagged.write_json(output)?;
-        writeln!(output)?;
-    }
-
-    Ok(())
+    tag_content(&content, extractor, output)
 }
 
 /// Process multiple files or stdin, extracting IP addresses as tags.
@@ -69,29 +78,7 @@ pub fn tag_files(
                     .read_to_end(&mut content)
                     .context("Failed to read from stdin")?;
 
-                // Create a tagged object for the whole stdin content
-                let mut tagged = Tagged::new(&content);
-
-                // Find all IP addresses in the content
-                for range in extractor.find_iter(&content) {
-                    let ip_slice = &content[range.clone()];
-                    let ip_str = String::from_utf8_lossy(ip_slice).to_string();
-
-                    // Add the tag with its range
-                    tagged = tagged.tag(Tag::new(ip_str).with_range(range));
-                }
-
-                // Only output if we found matches
-                if !tagged.tags().is_empty() {
-                    // Set the text data explicitly
-                    let text_str = String::from_utf8_lossy(&content).to_string();
-                    let mut tagged = tagged;
-                    tagged.set_text_data(TextData { text: text_str });
-
-                    // Write as JSON
-                    tagged.write_json(output)?;
-                    writeln!(output)?;
-                }
+                tag_content(&content, extractor, output)?;
             }
         }
     }

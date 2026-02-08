@@ -23,7 +23,6 @@ enum ValidatorType {
 }
 
 impl ValidatorType {
-    #[inline(always)]
     fn validate(&self, bytes: &[u8]) -> bool {
         match *self {
             ValidatorType::IPv4 {
@@ -81,7 +80,7 @@ pub struct Extractor {
 
 impl Extractor {
     /// Return an iterator of IP address matches found in the haystack.
-    #[inline(always)]
+    #[inline]
     pub fn find_iter<'a>(&'a self, haystack: &'a [u8]) -> impl Iterator<Item = Range<usize>> + 'a {
         self.regex.captures_iter(haystack).filter_map(move |caps| {
             let pid = caps.pattern()?;
@@ -125,42 +124,42 @@ impl ExtractorBuilder {
     }
 
     /// Include or exclude IPv4 addresses.
-    #[inline(always)]
+    #[inline]
     pub fn ipv4(&mut self, include: bool) -> &mut Self {
         self.include_ipv4 = include;
         self
     }
 
     /// Include or exclude IPv6 addresses.
-    #[inline(always)]
+    #[inline]
     pub fn ipv6(&mut self, include: bool) -> &mut Self {
         self.include_ipv6 = include;
         self
     }
 
     /// Include or exclude private IP addresses.
-    #[inline(always)]
+    #[inline]
     pub fn private_ips(&mut self, include: bool) -> &mut Self {
         self.include_private = include;
         self
     }
 
     /// Include or exclude loopback IP addresses.
-    #[inline(always)]
+    #[inline]
     pub fn loopback_ips(&mut self, include: bool) -> &mut Self {
         self.include_loopback = include;
         self
     }
 
     /// Include or exclude broadcast IP addresses.
-    #[inline(always)]
+    #[inline]
     pub fn broadcast_ips(&mut self, include: bool) -> &mut Self {
         self.include_broadcast = include;
         self
     }
 
     /// Only include internet-routable IP addresses (ones with valid ASN entries).
-    #[inline(always)]
+    #[inline]
     pub fn only_routable(&mut self, only: bool) -> &mut Self {
         self.only_routable = only;
         self
@@ -193,7 +192,35 @@ impl ExtractorBuilder {
 
         // Add IPv6 pattern if included
         if self.include_ipv6 {
-            // Use a constant for the IPv6 pattern to allow compiler optimization
+            // IPv6 address pattern (500+ characters due to complexity of IPv6 addressing)
+            //
+            // This pattern matches various IPv6 address formats specified in RFC 4291 and RFC 5952:
+            //
+            // 1. IPv4-mapped IPv6 addresses with 1-4 leading groups:
+            //    e.g., ::ffff:192.0.2.1, 2001:db8::192.0.2.1
+            //
+            // 2. IPv4-mapped with :: prefix (including IPv4-compatible):
+            //    e.g., ::192.0.2.1, ::ffff:192.0.2.1
+            //
+            // 3. Link-local with zone ID (fe80::/10 with %interface):
+            //    e.g., fe80::1%eth0
+            //
+            // 4. Compressed form with leading :: (1-7 trailing groups):
+            //    e.g., ::1, ::ffff:0:0
+            //
+            // 5-11. Standard forms with varying compression positions:
+            //    One leading group + compressed middle + 1-6 trailing groups
+            //    Two leading groups + compressed middle + 1-5 trailing groups
+            //    ...through to seven leading groups + compressed + one trailing
+            //
+            // 12. Seven groups ending with :: :
+            //    e.g., 2001:db8:85a3:8d3:1319:8a2e:370::
+            //
+            // 13. Full uncompressed form (8 groups of 4 hex digits):
+            //    e.g., 2001:0db8:85a3:0000:0000:8a2e:0370:7334
+            //
+            // The pattern is long because each compression possibility (::) requires a separate
+            // alternation to ensure at most one :: appears and the total is ≤8 groups.
             static IPV6_PATTERN: &str = r"(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,4}:[^\s:](?:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]).){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))|(?:::(?:ffff(?::0{1,4}){0,1}:){0,1}[^\s:](?:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]).){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))|(?:fe80:(?::(?:(?:[0-9a-fA-F]){1,4})){0,4}%[0-9a-zA-Z]{1,})|(?::(?:(?::(?:(?:[0-9a-fA-F]){1,4})){1,7}|:))|(?:(?:(?:[0-9a-fA-F]){1,4}):(?:(?::(?:(?:[0-9a-fA-F]){1,4})){1,6}))|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,2}(?::(?:(?:[0-9a-fA-F]){1,4})){1,5})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,3}(?::(?:(?:[0-9a-fA-F]){1,4})){1,4})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,4}(?::(?:(?:[0-9a-fA-F]){1,4})){1,3})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,5}(?::(?:(?:[0-9a-fA-F]){1,4})){1,2})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,6}:(?:(?:[0-9a-fA-F]){1,4}))|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,7}:)|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){7,7}(?:(?:[0-9a-fA-F]){1,4}))";
 
             let ipv6_hir: Hir = regex_syntax::Parser::new().parse(IPV6_PATTERN)?;
@@ -230,7 +257,6 @@ impl ExtractorBuilder {
 }
 
 /// Validate an IPv4 address
-#[inline(always)]
 fn validate_ipv4(
     bytes: &[u8],
     include_private: bool,
@@ -284,7 +310,6 @@ fn validate_ipv4(
 }
 
 /// Validate an IPv6 address
-#[inline(always)]
 fn validate_ipv6(
     bytes: &[u8],
     include_private: bool,
