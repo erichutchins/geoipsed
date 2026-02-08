@@ -144,8 +144,8 @@ fn bench_extract_mixed(c: &mut Criterion) {
 fn bench_tagged_write(c: &mut Criterion) {
     let mut group = c.benchmark_group("tagged_write");
 
-    // Test line with multiple IP addresses
-    let line = b"192.168.1.1 connected to 10.0.0.1 via 172.16.0.1 from 8.8.8.8 through 1.1.1.1 and 93.184.216.34 also 142.250.185.78 plus 151.101.1.140 then 104.16.132.229 more 13.107.42.14";
+    // Test line with multiple IP addresses (long enough for 20+ tags)
+    let line = b"192.168.1.1 connected to 10.0.0.1 via 172.16.0.1 from 8.8.8.8 through 1.1.1.1 and 93.184.216.34 also 142.250.185.78 plus 151.101.1.140 then 104.16.132.229 more 13.107.42.14 end 192.168.1.15 start 8.8.4.4 here 1.0.0.1 now 8.26.56.26 also 208.67.222.222";
 
     for tag_count in [1, 2, 5, 20] {
         group.bench_with_input(
@@ -160,7 +160,7 @@ fn bench_tagged_write(c: &mut Criterion) {
                         .with_range(pos..pos + 10)
                         .with_decoration(format!("<AS{}_ORG|US|City>", 1000 + i));
                     tagged = tagged.tag(tag);
-                    pos += 20;
+                    pos += (line.len() - 10) / (tag_count as usize + 1);
                 }
 
                 // Benchmark the write operation
@@ -180,8 +180,8 @@ fn bench_tagged_write(c: &mut Criterion) {
 fn bench_tagged_json(c: &mut Criterion) {
     let mut group = c.benchmark_group("tagged_json");
 
-    // Test line with multiple IP addresses
-    let line = b"192.168.1.1 connected to 10.0.0.1 via 172.16.0.1 from 8.8.8.8 through 1.1.1.1 and 93.184.216.34 also 142.250.185.78 plus 151.101.1.140 then 104.16.132.229 more 13.107.42.10";
+    // Test line with multiple IP addresses (long enough for 20+ tags)
+    let line = b"192.168.1.1 connected to 10.0.0.1 via 172.16.0.1 from 8.8.8.8 through 1.1.1.1 and 93.184.216.34 also 142.250.185.78 plus 151.101.1.140 then 104.16.132.229 more 13.107.42.14 end 192.168.1.15 start 8.8.4.4 here 1.0.0.1 now 8.26.56.26 also 208.67.222.222";
 
     for tag_count in [1, 2, 5, 20] {
         group.bench_with_input(
@@ -196,7 +196,7 @@ fn bench_tagged_json(c: &mut Criterion) {
                         .with_range(pos..pos + 10)
                         .with_decoration(format!("<AS{}_ORG|US|City>", 1000 + i));
                     tagged = tagged.tag(tag);
-                    pos += 20;
+                    pos += (line.len() - 10) / (tag_count as usize + 1);
                 }
 
                 // Benchmark the write_json operation
