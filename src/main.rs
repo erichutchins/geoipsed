@@ -12,6 +12,7 @@ pub mod geoip;
 pub mod input;
 pub mod mmdb;
 pub mod tag;
+pub mod template;
 
 use input::FileOrStdin;
 use tag::{Tag, Tagged};
@@ -208,11 +209,17 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     let include_loopback = args.all || !args.no_loopback;
     let include_broadcast = args.all || !args.no_broadcast;
 
-    let geoipdb = geoip::GeoIPSed::new(
+    // Initialize provider registry
+    let mut provider_registry = mmdb::ProviderRegistry::default();
+    provider_registry.set_active_provider(&args.provider)?;
+    provider_registry.initialize_active_provider(args.include.clone())?;
+
+    let geoipdb = geoip::GeoIPSed::new_with_provider(
         args.include.clone(),
         args.template.clone(),
         colormode,
         args.only_routable,
+        provider_registry,
     )?;
 
     // Build the IP extractor with appropriate settings
@@ -241,9 +248,6 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     let only_matching = args.only_matching;
     let tag_mode = args.tag;
 
-    // Pre-allocate buffer for UTF-8 conversion of IP addresses
-    let mut ip_buffer = String::with_capacity(128);
-
     for path in args.input {
         let input = FileOrStdin::from_path(path);
         let mut reader = input.reader()?;
@@ -254,68 +258,71 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
             if only_matching {
                 // Only matching mode: just output each IP on its own line
                 for range in extractor.find_iter(haystack) {
-                    ip_buffer.clear(); // Reuse buffer
                     let ipstr = match std::str::from_utf8(&haystack[range.clone()]) {
-                        Ok(s) => {
-                            ip_buffer.push_str(s);
-                            &ip_buffer
-                        }
+                        Ok(s) => s,
                         Err(_) => "decode error",
                     };
 
-                    // Avoid cloning when inserting into cache
-                    let decorated = cache
-                        .entry(ipstr.to_string())
-                        .or_insert_with(|| geoipdb.lookup(ipstr));
-
-                    // Write the decorated IP and a newline
-                    out.write_all(decorated.as_bytes())?;
-                    out.write_all(b"\n")?;
+                    // Check cache first, avoiding allocation on hit
+                    if let Some(cached) = cache.get(ipstr) {
+                        out.write_all(cached.as_bytes())?;
+                        out.write_all(b"\n")?;
+                    } else {
+                        let result = geoipdb.lookup(ipstr);
+                        out.write_all(result.as_bytes())?;
+                        out.write_all(b"\n")?;
+                        cache.insert(ipstr.to_owned(), result);
+                    }
                 }
             } else {
-                // Build tags for all matches - fast path for no tag mode
-                if !tag_mode && extractor.find_iter(haystack).count() == 0 {
-                    // Fast path - no matches, just write the line as is
-                    out.write_all(line.full())?;
-                    return Ok(true);
-                }
-
+                // Build tags for all matches
                 let mut tagged = Tagged::new(line.full());
+                let mut has_matches = false;
 
                 // Process all matches
                 for range in extractor.find_iter(haystack) {
-                    ip_buffer.clear(); // Reuse buffer
+                    has_matches = true;
                     let ipstr = if let Ok(s) = std::str::from_utf8(&haystack[range.clone()]) {
-                        ip_buffer.push_str(s);
-                        ip_buffer.clone()
+                        s
                     } else {
-                        "decode error".to_string()
+                        "decode error"
                     };
 
                     if tag_mode {
                         // In tag mode, just store the original IP and its range
-                        tagged = tagged.tag(Tag::new(ipstr).with_range(range));
+                        tagged = tagged.tag(Tag::new(ipstr.to_owned()).with_range(range));
                     } else {
-                        // Direct lookup with ownership transfer to reduce allocations
-                        let decorated = cache
-                            .entry(ipstr.clone())
-                            .or_insert_with(|| geoipdb.lookup(&ipstr))
-                            .clone();
-
-                        // Add the tag with its decoration
-                        tagged = tagged
-                            .tag(Tag::new(ipstr).with_range(range).with_decoration(decorated));
+                        // Check cache first, avoiding allocation on hit
+                        if let Some(cached) = cache.get(ipstr) {
+                            tagged = tagged.tag(
+                                Tag::new(ipstr.to_owned())
+                                    .with_range(range)
+                                    .with_decoration(cached.clone()),
+                            );
+                        } else {
+                            let result = geoipdb.lookup(ipstr);
+                            tagged = tagged.tag(
+                                Tag::new(ipstr.to_owned())
+                                    .with_range(range)
+                                    .with_decoration(result.clone()),
+                            );
+                            cache.insert(ipstr.to_owned(), result);
+                        }
                     }
+                }
+
+                // If no matches, just write the original line
+                if !has_matches {
+                    out.write_all(line.full())?;
+                    return Ok(true);
                 }
 
                 // Write output based on mode
                 if tag_mode {
                     // Write as JSON in tag mode
-                    if !tagged.tags().is_empty() {
-                        let mut tagged = tagged; // Make mutable for write_json
-                        tagged.write_json(&mut out)?;
-                        out.write_all(b"\n")?;
-                    }
+                    let mut tagged = tagged; // Make mutable for write_json
+                    tagged.write_json(&mut out)?;
+                    out.write_all(b"\n")?;
                 } else {
                     // Write decorated text in normal mode
                     tagged.write(&mut out)?;

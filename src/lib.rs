@@ -9,28 +9,63 @@
 //!
 //! ```rust,no_run
 //! use geoipsed::{MmdbProvider, ProviderRegistry, TemplateField};
-//! use geoipsed::{define_mmdb_provider, register_mmdb_provider};
+//! use std::path::{Path, PathBuf};
+//! use anyhow::Result;
 //!
-//! // Create a custom provider with the macro
-//! let provider = define_mmdb_provider!(
-//!     name: "My Custom Provider",
-//!     default_path: "/path/to/mmdb",
-//!     files: ["custom.mmdb"],
-//!     fields: [
-//!         "ip" => {
-//!             description: "The IP address",
-//!             example: "93.184.216.34"
-//!         },
-//!         "custom_field" => {
-//!             description: "My custom field",
-//!             example: "Custom value"
-//!         }
-//!     ]
-//! );
+//! // Implement the MmdbProvider trait for your custom provider
+//! #[derive(Debug)]
+//! struct CustomProvider {
+//!     name: String,
+//!     initialized: bool,
+//! }
+//!
+//! impl MmdbProvider for CustomProvider {
+//!     fn name(&self) -> &str {
+//!         &self.name
+//!     }
+//!
+//!     fn default_path(&self) -> PathBuf {
+//!         PathBuf::from("/path/to/mmdb")
+//!     }
+//!
+//!     fn required_files(&self) -> Vec<String> {
+//!         vec!["custom.mmdb".to_string()]
+//!     }
+//!
+//!     fn available_fields(&self) -> Vec<TemplateField> {
+//!         vec![
+//!             TemplateField {
+//!                 name: "ip".to_string(),
+//!                 description: "The IP address".to_string(),
+//!                 example: "93.184.216.34".to_string(),
+//!             },
+//!         ]
+//!     }
+//!
+//!     fn initialize(&mut self, _path: &Path) -> Result<()> {
+//!         self.initialized = true;
+//!         Ok(())
+//!     }
+//!
+//!     fn lookup(&self, ip_str: &str, template: &str) -> Result<String> {
+//!         // Your lookup implementation here
+//!         Ok(template.replace("{ip}", ip_str))
+//!     }
+//!
+//!     fn has_asn(&self, _ip_str: &str) -> bool {
+//!         false
+//!     }
+//! }
 //!
 //! // Register with a registry
 //! let mut registry = ProviderRegistry::default();
-//! register_mmdb_provider!(registry, "mycustom", provider);
+//! registry.register(
+//!     "custom".to_string(),
+//!     Box::new(CustomProvider {
+//!         name: "My Custom Provider".to_string(),
+//!         initialized: false,
+//!     })
+//! );
 //! ```
 
 pub mod error;
