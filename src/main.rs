@@ -1,6 +1,5 @@
 use anyhow::{Error, Result};
 use bstr::io::BufReadExt;
-use bstr::ByteSlice;
 use camino::Utf8PathBuf;
 use clap::{Parser, ValueEnum};
 use rustc_hash::FxHashMap as HashMap;
@@ -275,47 +274,41 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
         } else {
             // Process line-by-line for normal and tag modes
             reader.for_byte_line_with_terminator(|line| {
-                let haystack = line.trim_end_with(|c| c == '\n' || c == '\r');
-
-                // Build tags for all matches
-                let mut tagged = Tagged::new(line);
-                let mut has_matches = false;
-
-                for range in extractor.find_iter(haystack) {
-                    has_matches = true;
-                    let ipstr =
-                        std::str::from_utf8(&haystack[range.clone()]).unwrap_or("decode error");
-
-                    if tag_mode {
-                        tagged = tagged.tag(Tag::new(ipstr.to_owned()).with_range(range));
-                    } else if let Some(cached) = cache.get(ipstr) {
-                        tagged = tagged.tag(
-                            Tag::new(ipstr.to_owned())
-                                .with_range(range)
-                                .with_decoration(cached.clone()),
-                        );
-                    } else {
-                        let result = geoipdb.lookup(ipstr);
-                        tagged = tagged.tag(
-                            Tag::new(ipstr.to_owned())
-                                .with_range(range)
-                                .with_decoration(result.clone()),
-                        );
-                        cache.insert(ipstr.to_owned(), result);
-                    }
-                }
-
-                if !has_matches {
-                    out.write_all(line)?;
-                    return Ok(true);
-                }
-
                 if tag_mode {
-                    let mut tagged = tagged;
+                    let mut tagged = Tagged::new(line);
+
+                    for range in extractor.find_iter(line) {
+                        let ipstr =
+                            std::str::from_utf8(&line[range.clone()]).unwrap_or("decode error");
+                        // In tag mode, we don't decorate, just tag.
+                        tagged = tagged.tag(
+                            Tag::new(ipstr.to_owned())
+                                .with_range(range)
+                                .with_decoration(String::new()),
+                        );
+                    }
                     tagged.write_json(&mut out)?;
-                    out.write_all(b"\n")?;
                 } else {
-                    tagged.write(&mut out)?;
+                    // Fast path: Stream directly to avoid allocations for Tagged/Tag structs
+                    let mut last_pos = 0;
+                    for range in extractor.find_iter(line) {
+                        // Write text before the match
+                        out.write_all(&line[last_pos..range.start])?;
+
+                        let ipstr =
+                            std::str::from_utf8(&line[range.clone()]).unwrap_or("decode error");
+
+                        if let Some(cached) = cache.get(ipstr) {
+                            out.write_all(cached.as_bytes())?;
+                        } else {
+                            let result = geoipdb.lookup(ipstr);
+                            out.write_all(result.as_bytes())?;
+                            cache.insert(ipstr.to_owned(), result);
+                        }
+                        last_pos = range.end;
+                    }
+                    // Write remaining text
+                    out.write_all(&line[last_pos..])?;
                 }
 
                 Ok(true)
