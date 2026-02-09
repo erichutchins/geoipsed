@@ -1,8 +1,10 @@
 use anyhow::{Error, Result};
+use bstr::io::BufReadExt;
+use bstr::ByteSlice;
 use camino::Utf8PathBuf;
 use clap::{Parser, ValueEnum};
 use rustc_hash::FxHashMap as HashMap;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::process::ExitCode;
 use termcolor::{ColorChoice, StandardStream};
 
@@ -252,16 +254,20 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
         let input = FileOrStdin::from_path(path);
         let mut reader = input.reader()?;
 
-        // Process each line with a fast path for unmodified lines
-        reader.for_byte_line(|line| {
-            let haystack = line.content();
-            if only_matching {
-                // Only matching mode: just output each IP on its own line
-                for range in extractor.find_iter(haystack) {
-                    let ipstr =
-                        std::str::from_utf8(&haystack[range.clone()]).unwrap_or("decode error");
+        // In only_matching mode, skip line iteration entirely and run regex
+        // directly over the reader's buffer.
+        if only_matching {
+            loop {
+                let buf = reader.fill_buf()?;
+                if buf.is_empty() {
+                    break;
+                }
+                let len = buf.len();
 
-                    // Check cache first, avoiding allocation on hit
+                for range in extractor.find_iter(buf) {
+                    let ipstr =
+                        std::str::from_utf8(&buf[range.clone()]).unwrap_or("decode error");
+
                     if let Some(cached) = cache.get(ipstr) {
                         out.write_all(cached.as_bytes())?;
                         out.write_all(b"\n")?;
@@ -272,22 +278,25 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                         cache.insert(ipstr.to_owned(), result);
                     }
                 }
-            } else {
+                reader.consume(len);
+            }
+        } else {
+            // Process line-by-line for normal and tag modes
+            reader.for_byte_line_with_terminator(|line| {
+                let haystack = line.trim_end_with(|c| c == '\n' || c == '\r');
+
                 // Build tags for all matches
-                let mut tagged = Tagged::new(line.full());
+                let mut tagged = Tagged::new(line);
                 let mut has_matches = false;
 
-                // Process all matches
                 for range in extractor.find_iter(haystack) {
                     has_matches = true;
                     let ipstr =
                         std::str::from_utf8(&haystack[range.clone()]).unwrap_or("decode error");
 
                     if tag_mode {
-                        // In tag mode, just store the original IP and its range
                         tagged = tagged.tag(Tag::new(ipstr.to_owned()).with_range(range));
                     } else {
-                        // Check cache first, avoiding allocation on hit
                         if let Some(cached) = cache.get(ipstr) {
                             tagged = tagged.tag(
                                 Tag::new(ipstr.to_owned())
@@ -306,26 +315,22 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                     }
                 }
 
-                // If no matches, just write the original line
                 if !has_matches {
-                    out.write_all(line.full())?;
+                    out.write_all(line)?;
                     return Ok(true);
                 }
 
-                // Write output based on mode
                 if tag_mode {
-                    // Write as JSON in tag mode
-                    let mut tagged = tagged; // Make mutable for write_json
+                    let mut tagged = tagged;
                     tagged.write_json(&mut out)?;
                     out.write_all(b"\n")?;
                 } else {
-                    // Write decorated text in normal mode
                     tagged.write(&mut out)?;
                 }
-            }
 
-            Ok(true)
-        })?;
+                Ok(true)
+            })?;
+        }
         out.flush()?;
     }
 
