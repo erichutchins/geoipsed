@@ -265,8 +265,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                 let len = buf.len();
 
                 for range in extractor.find_iter(buf) {
-                    let ipstr =
-                        std::str::from_utf8(&buf[range.clone()]).unwrap_or("decode error");
+                    let ipstr = std::str::from_utf8(&buf[range.clone()]).unwrap_or("decode error");
 
                     if let Some(cached) = cache.get(ipstr) {
                         out.write_all(cached.as_bytes())?;
@@ -296,22 +295,20 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
 
                     if tag_mode {
                         tagged = tagged.tag(Tag::new(ipstr.to_owned()).with_range(range));
+                    } else if let Some(cached) = cache.get(ipstr) {
+                        tagged = tagged.tag(
+                            Tag::new(ipstr.to_owned())
+                                .with_range(range)
+                                .with_decoration(cached.clone()),
+                        );
                     } else {
-                        if let Some(cached) = cache.get(ipstr) {
-                            tagged = tagged.tag(
-                                Tag::new(ipstr.to_owned())
-                                    .with_range(range)
-                                    .with_decoration(cached.clone()),
-                            );
-                        } else {
-                            let result = geoipdb.lookup(ipstr);
-                            tagged = tagged.tag(
-                                Tag::new(ipstr.to_owned())
-                                    .with_range(range)
-                                    .with_decoration(result.clone()),
-                            );
-                            cache.insert(ipstr.to_owned(), result);
-                        }
+                        let result = geoipdb.lookup(ipstr);
+                        tagged = tagged.tag(
+                            Tag::new(ipstr.to_owned())
+                                .with_range(range)
+                                .with_decoration(result.clone()),
+                        );
+                        cache.insert(ipstr.to_owned(), result);
                     }
                 }
 

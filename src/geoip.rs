@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
-use maxminddb::geoip2;
-use maxminddb::Mmap;
+use maxminddb::geoip2::{Asn, City};
 use std::net::IpAddr;
 use termcolor::ColorChoice;
 
@@ -22,8 +21,8 @@ const ZERO_STR: &str = "0";
 const ZERO_FLOAT_STR: &str = "0.0";
 
 pub struct GeoIPSed {
-    asnreader: maxminddb::Reader<Mmap>,
-    cityreader: maxminddb::Reader<Mmap>,
+    asnreader: maxminddb::Reader<Vec<u8>>,
+    cityreader: maxminddb::Reader<Vec<u8>>,
     pub color: ColorChoice,
     template: Template,
     pub only_routable: bool,
@@ -54,11 +53,11 @@ impl GeoIPSed {
         let city_path = dbpath.join(CITY_DB_FILENAME);
 
         // Open ASN database
-        let asnreader = maxminddb::Reader::open_mmap(&asn_path)
+        let asnreader = maxminddb::Reader::open_readfile(&asn_path)
             .with_context(|| format!("Failed to open ASN database at {}", asn_path))?;
 
         // Open City database
-        let cityreader = maxminddb::Reader::open_mmap(&city_path)
+        let cityreader = maxminddb::Reader::open_readfile(&city_path)
             .with_context(|| format!("Failed to open City database at {}", city_path))?;
 
         Ok(Self {
@@ -100,12 +99,12 @@ impl GeoIPSed {
 
         // Open ASN database with error context
         let asn_path = dbpath.join(ASN_DB_FILENAME);
-        let asnreader = maxminddb::Reader::open_mmap(&asn_path)
+        let asnreader = maxminddb::Reader::open_readfile(&asn_path)
             .with_context(|| format!("Failed to open ASN database at {}", asn_path))?;
 
         // Open City database with error context
         let city_path = dbpath.join(CITY_DB_FILENAME);
-        let cityreader = maxminddb::Reader::open_mmap(&city_path)
+        let cityreader = maxminddb::Reader::open_readfile(&city_path)
             .with_context(|| format!("Failed to open City database at {}", city_path))?;
 
         Ok(Self {
@@ -148,7 +147,7 @@ impl GeoIPSed {
         // Check if we need to validate for routability
         if self.only_routable {
             // Try to fetch ASN info to check if routable - just do a quick lookup
-            if self.asnreader.lookup::<geoip2::Asn>(ip).is_err() {
+            if self.asnreader.lookup(ip).is_err() {
                 return s.to_string();
             }
         }
@@ -165,41 +164,22 @@ impl GeoIPSed {
         let mut timezone: &str = EMPTY_STR;
 
         // Look up ASN information
-        if let Ok(asnrecord) = self.asnreader.lookup::<geoip2::Asn>(ip) {
+        if let Ok(Some(asnrecord)) = self.asnreader.lookup(ip).and_then(|r| r.decode::<Asn>()) {
             asnnum = asnrecord.autonomous_system_number.unwrap_or(0);
             asnorg = asnrecord
                 .autonomous_system_organization
                 .unwrap_or(EMPTY_STR);
         }
 
-        // Look up city/country information - optimize for most common paths
-        if let Ok(cityrecord) = self.cityreader.lookup::<geoip2::City>(ip) {
-            // Extract continent information
-            continent = cityrecord
-                .continent
-                .and_then(|c| c.code)
-                .unwrap_or(EMPTY_STR);
-
-            // Extract country information
-            if let Some(c) = cityrecord.country {
-                country_iso = c.iso_code.unwrap_or(EMPTY_STR);
-                if let Some(n) = c.names {
-                    country_full = n.get("en").unwrap_or(&EMPTY_STR);
-                }
-            }
-
-            // get city name, hard coded for en language currently
-            city = match cityrecord.city.and_then(|c| c.names) {
-                Some(names) => names.get("en").unwrap_or(&EMPTY_STR),
-                None => EMPTY_STR,
-            };
-
-            // Extract location information
-            if let Some(locrecord) = cityrecord.location {
-                timezone = locrecord.time_zone.unwrap_or(EMPTY_STR);
-                latitude = locrecord.latitude.unwrap_or(0.0);
-                longitude = locrecord.longitude.unwrap_or(0.0);
-            };
+        // Look up city/country information
+        if let Ok(Some(cityrecord)) = self.cityreader.lookup(ip).and_then(|r| r.decode::<City>()) {
+            continent = cityrecord.continent.code.unwrap_or(EMPTY_STR);
+            country_iso = cityrecord.country.iso_code.unwrap_or(EMPTY_STR);
+            country_full = cityrecord.country.names.english.unwrap_or(EMPTY_STR);
+            city = cityrecord.city.names.english.unwrap_or(EMPTY_STR);
+            timezone = cityrecord.location.time_zone.unwrap_or(EMPTY_STR);
+            latitude = cityrecord.location.latitude.unwrap_or(0.0);
+            longitude = cityrecord.location.longitude.unwrap_or(0.0);
         }
 
         // Convert numeric fields to strings

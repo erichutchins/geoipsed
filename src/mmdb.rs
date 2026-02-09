@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
-use maxminddb::{geoip2, Mmap, Reader};
+use maxminddb::geoip2::{Asn, City};
+use maxminddb::Reader;
 use serde::Serialize;
 
 /// Represents a field that can be used in templates
@@ -73,10 +74,10 @@ pub trait MmdbProvider: fmt::Debug {
 pub struct MaxMindProvider {
     name: String,
     initialized: bool,
-    asn_reader: Option<Reader<Mmap>>,
-    city_reader: Option<Reader<Mmap>>,
-    ipv4_reader: Option<Reader<Mmap>>,
-    ipv6_reader: Option<Reader<Mmap>>,
+    asn_reader: Option<Reader<Vec<u8>>>,
+    city_reader: Option<Reader<Vec<u8>>>,
+    ipv4_reader: Option<Reader<Vec<u8>>>,
+    ipv6_reader: Option<Reader<Vec<u8>>>,
 }
 
 impl Default for MaxMindProvider {
@@ -191,14 +192,14 @@ impl MmdbProvider for MaxMindProvider {
         // Try to open the main databases first (normal operation)
         let asn_path = path.join("GeoLite2-ASN.mmdb");
         if asn_path.exists() {
-            self.asn_reader = Some(Reader::open_mmap(&asn_path).with_context(|| {
+            self.asn_reader = Some(Reader::open_readfile(&asn_path).with_context(|| {
                 format!("Failed to open ASN database at {}", asn_path.display())
             })?);
         }
 
         let city_path = path.join("GeoLite2-City.mmdb");
         if city_path.exists() {
-            self.city_reader = Some(Reader::open_mmap(&city_path).with_context(|| {
+            self.city_reader = Some(Reader::open_readfile(&city_path).with_context(|| {
                 format!("Failed to open City database at {}", city_path.display())
             })?);
         }
@@ -209,21 +210,23 @@ impl MmdbProvider for MaxMindProvider {
             let ipv6_asn_path = path.join("GeoLite2-ASN-IPv6.mmdb");
 
             if ipv4_asn_path.exists() {
-                self.ipv4_reader = Some(Reader::open_mmap(&ipv4_asn_path).with_context(|| {
-                    format!(
-                        "Failed to open IPv4 ASN database at {}",
-                        ipv4_asn_path.display()
-                    )
-                })?);
+                self.ipv4_reader =
+                    Some(Reader::open_readfile(&ipv4_asn_path).with_context(|| {
+                        format!(
+                            "Failed to open IPv4 ASN database at {}",
+                            ipv4_asn_path.display()
+                        )
+                    })?);
             }
 
             if ipv6_asn_path.exists() {
-                self.ipv6_reader = Some(Reader::open_mmap(&ipv6_asn_path).with_context(|| {
-                    format!(
-                        "Failed to open IPv6 ASN database at {}",
-                        ipv6_asn_path.display()
-                    )
-                })?);
+                self.ipv6_reader =
+                    Some(Reader::open_readfile(&ipv6_asn_path).with_context(|| {
+                        format!(
+                            "Failed to open IPv6 ASN database at {}",
+                            ipv6_asn_path.display()
+                        )
+                    })?);
             }
         }
 
@@ -232,21 +235,23 @@ impl MmdbProvider for MaxMindProvider {
             let ipv6_city_path = path.join("GeoLite2-City-IPv6.mmdb");
 
             if ipv4_city_path.exists() {
-                self.ipv4_reader = Some(Reader::open_mmap(&ipv4_city_path).with_context(|| {
-                    format!(
-                        "Failed to open IPv4 City database at {}",
-                        ipv4_city_path.display()
-                    )
-                })?);
+                self.ipv4_reader =
+                    Some(Reader::open_readfile(&ipv4_city_path).with_context(|| {
+                        format!(
+                            "Failed to open IPv4 City database at {}",
+                            ipv4_city_path.display()
+                        )
+                    })?);
             }
 
             if ipv6_city_path.exists() {
-                self.ipv6_reader = Some(Reader::open_mmap(&ipv6_city_path).with_context(|| {
-                    format!(
-                        "Failed to open IPv6 City database at {}",
-                        ipv6_city_path.display()
-                    )
-                })?);
+                self.ipv6_reader =
+                    Some(Reader::open_readfile(&ipv6_city_path).with_context(|| {
+                        format!(
+                            "Failed to open IPv6 City database at {}",
+                            ipv6_city_path.display()
+                        )
+                    })?);
             }
         }
 
@@ -282,13 +287,9 @@ impl MmdbProvider for MaxMindProvider {
         let mut asn_org_val = "";
 
         if let Some(ref asn_reader) = self.asn_reader {
-            if let Ok(asn_record) = asn_reader.lookup::<geoip2::Asn>(ip) {
-                if let Some(asn) = asn_record.autonomous_system_number {
-                    asn_num_val = asn;
-                }
-                if let Some(org) = asn_record.autonomous_system_organization {
-                    asn_org_val = org;
-                }
+            if let Ok(Some(asn_record)) = asn_reader.lookup(ip).and_then(|r| r.decode::<Asn>()) {
+                asn_num_val = asn_record.autonomous_system_number.unwrap_or(0);
+                asn_org_val = asn_record.autonomous_system_organization.unwrap_or("");
             }
         } else if (is_ipv4 && self.ipv4_reader.is_some())
             || (!is_ipv4 && self.ipv6_reader.is_some())
@@ -300,13 +301,9 @@ impl MmdbProvider for MaxMindProvider {
                 &self.ipv6_reader
             };
             if let Some(ref reader) = reader {
-                if let Ok(asn_record) = reader.lookup::<geoip2::Asn>(ip) {
-                    if let Some(asn) = asn_record.autonomous_system_number {
-                        asn_num_val = asn;
-                    }
-                    if let Some(org) = asn_record.autonomous_system_organization {
-                        asn_org_val = org;
-                    }
+                if let Ok(Some(asn_record)) = reader.lookup(ip).and_then(|r| r.decode::<Asn>()) {
+                    asn_num_val = asn_record.autonomous_system_number.unwrap_or(0);
+                    asn_org_val = asn_record.autonomous_system_organization.unwrap_or("");
                 }
             }
         }
@@ -328,43 +325,14 @@ impl MmdbProvider for MaxMindProvider {
         let mut lon_val = 0.0;
 
         if let Some(ref city_reader) = self.city_reader {
-            if let Ok(city_record) = city_reader.lookup::<geoip2::City>(ip) {
-                // Continent info
-                if let Some(c) = city_record.continent.and_then(|c| c.code) {
-                    continent_val = c;
-                }
-
-                // Country info
-                if let Some(country) = city_record.country {
-                    if let Some(iso) = country.iso_code {
-                        country_iso_val = iso;
-                    }
-                    if let Some(names) = country.names {
-                        if let Some(name) = names.get("en") {
-                            country_full_val = *name;
-                        }
-                    }
-                }
-
-                // City info
-                if let Some(c) = city_record.city.and_then(|c| c.names) {
-                    if let Some(name) = c.get("en") {
-                        city_val = *name;
-                    }
-                }
-
-                // Location info
-                if let Some(location) = city_record.location {
-                    if let Some(tz) = location.time_zone {
-                        timezone_val = tz;
-                    }
-                    if let Some(lat) = location.latitude {
-                        lat_val = lat;
-                    }
-                    if let Some(lon) = location.longitude {
-                        lon_val = lon;
-                    }
-                }
+            if let Ok(Some(city_record)) = city_reader.lookup(ip).and_then(|r| r.decode::<City>()) {
+                continent_val = city_record.continent.code.unwrap_or("");
+                country_iso_val = city_record.country.iso_code.unwrap_or("");
+                country_full_val = city_record.country.names.english.unwrap_or("");
+                city_val = city_record.city.names.english.unwrap_or("");
+                timezone_val = city_record.location.time_zone.unwrap_or("");
+                lat_val = city_record.location.latitude.unwrap_or(0.0);
+                lon_val = city_record.location.longitude.unwrap_or(0.0);
             }
         }
 
@@ -419,7 +387,7 @@ impl MmdbProvider for MaxMindProvider {
 
         // Check if ASN info is available
         if let Some(ref asn_reader) = self.asn_reader {
-            if let Ok(asn_record) = asn_reader.lookup::<geoip2::Asn>(ip) {
+            if let Ok(Some(asn_record)) = asn_reader.lookup(ip).and_then(|r| r.decode::<Asn>()) {
                 return asn_record.autonomous_system_number.is_some();
             }
         }
