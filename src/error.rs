@@ -12,7 +12,7 @@ pub enum Error {
     LookupFailed {
         ip: String,
         #[source]
-        source: maxminddb::MaxMindDBError,
+        source: maxminddb::MaxMindDbError,
     },
 
     /// Template string is malformed.
