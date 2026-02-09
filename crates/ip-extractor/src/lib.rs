@@ -1,10 +1,13 @@
 use std::borrow::Cow;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Range;
 use std::str;
 
 use regex_automata::meta::Regex;
 use regex_syntax::hir::Hir;
+
+mod tag;
+pub use tag::{Tag, Tagged, TextData};
 
 /// The types of validators we support
 #[derive(Clone, Debug)]
@@ -34,11 +37,7 @@ impl ValidatorType {
                 // Fast path for common case (all included)
                 if include_private && include_loopback && include_broadcast && !only_routable {
                     // In this case we only need to validate it's a valid IP, which the regex already did
-                    let s = match std::str::from_utf8(bytes) {
-                        Ok(s) => s,
-                        Err(_) => return false,
-                    };
-                    s.parse::<std::net::Ipv4Addr>().is_ok()
+                    parse_ipv4_bytes(bytes).is_some()
                 } else {
                     validate_ipv4(
                         bytes,
@@ -192,35 +191,7 @@ impl ExtractorBuilder {
 
         // Add IPv6 pattern if included
         if self.include_ipv6 {
-            // IPv6 address pattern (500+ characters due to complexity of IPv6 addressing)
-            //
-            // This pattern matches various IPv6 address formats specified in RFC 4291 and RFC 5952:
-            //
-            // 1. IPv4-mapped IPv6 addresses with 1-4 leading groups:
-            //    e.g., ::ffff:192.0.2.1, 2001:db8::192.0.2.1
-            //
-            // 2. IPv4-mapped with :: prefix (including IPv4-compatible):
-            //    e.g., ::192.0.2.1, ::ffff:192.0.2.1
-            //
-            // 3. Link-local with zone ID (fe80::/10 with %interface):
-            //    e.g., fe80::1%eth0
-            //
-            // 4. Compressed form with leading :: (1-7 trailing groups):
-            //    e.g., ::1, ::ffff:0:0
-            //
-            // 5-11. Standard forms with varying compression positions:
-            //    One leading group + compressed middle + 1-6 trailing groups
-            //    Two leading groups + compressed middle + 1-5 trailing groups
-            //    ...through to seven leading groups + compressed + one trailing
-            //
-            // 12. Seven groups ending with :: :
-            //    e.g., 2001:db8:85a3:8d3:1319:8a2e:370::
-            //
-            // 13. Full uncompressed form (8 groups of 4 hex digits):
-            //    e.g., 2001:0db8:85a3:0000:0000:8a2e:0370:7334
-            //
-            // The pattern is long because each compression possibility (::) requires a separate
-            // alternation to ensure at most one :: appears and the total is ≤8 groups.
+            // IPv6 address pattern
             static IPV6_PATTERN: &str = r"(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,4}:[^\s:](?:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]).){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))|(?:::(?:ffff(?::0{1,4}){0,1}:){0,1}[^\s:](?:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]).){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))|(?:fe80:(?::(?:(?:[0-9a-fA-F]){1,4})){0,4}%[0-9a-zA-Z]{1,})|(?::(?:(?::(?:(?:[0-9a-fA-F]){1,4})){1,7}|:))|(?:(?:(?:[0-9a-fA-F]){1,4}):(?:(?::(?:(?:[0-9a-fA-F]){1,4})){1,6}))|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,2}(?::(?:(?:[0-9a-fA-F]){1,4})){1,5})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,3}(?::(?:(?:[0-9a-fA-F]){1,4})){1,4})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,4}(?::(?:(?:[0-9a-fA-F]){1,4})){1,3})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,5}(?::(?:(?:[0-9a-fA-F]){1,4})){1,2})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,6}:(?:(?:[0-9a-fA-F]){1,4}))|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,7}:)|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){7,7}(?:(?:[0-9a-fA-F]){1,4}))";
 
             let ipv6_hir: Hir = regex_syntax::Parser::new().parse(IPV6_PATTERN)?;
@@ -264,49 +235,79 @@ fn validate_ipv4(
     include_broadcast: bool,
     _only_routable: bool,
 ) -> bool {
-    // Fast path: Check common patterns for IPv4 addresses before parsing
+    // Parse the IP address directly from bytes
+    let ipv4 = match parse_ipv4_bytes(bytes) {
+        Some(ip) => ip,
+        None => return false,
+    };
+
+    // Check if we should include all types - fast path
+    if include_private && include_loopback && include_broadcast {
+        return true;
+    }
+
+    // Short-circuit evaluation to avoid unnecessary checks
+    if !include_private && ipv4.is_private() {
+        return false;
+    }
+
+    if !include_loopback && ipv4.is_loopback() {
+        return false;
+    }
+
+    if !include_broadcast && (ipv4.is_broadcast() || ipv4.is_link_local()) {
+        return false;
+    }
+
+    // For "only routable" validation, we'll defer to the GeoIPSed component
+    true
+}
+
+/// Parse an IPv4 address from a byte slice without UTF-8 conversion.
+/// This strictly matches the format [0-255].[0-255].[0-255].[0-255]
+/// and disallows leading zeros in multi-digit octets (matching std::net::Ipv4Addr).
+#[inline]
+pub fn parse_ipv4_bytes(bytes: &[u8]) -> Option<Ipv4Addr> {
     if bytes.len() < 7 || bytes.len() > 15 {
-        return false; // Too short or too long to be a valid IPv4
+        return None;
     }
 
-    // Parse the bytes as a string directly
-    let s = match std::str::from_utf8(bytes) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
+    let mut octets = [0u8; 4];
+    let mut octet_idx = 0;
+    let mut current_val = 0u16;
+    let mut digits_in_octet = 0;
 
-    // Parse the IP address
-    let ip = match s.parse::<IpAddr>() {
-        Ok(ip) => ip,
-        Err(_) => return false,
-    };
-
-    // Process IPv4 addresses
-    match ip {
-        IpAddr::V4(ipv4) => {
-            // Check if we should include all types - fast path
-            if include_private && include_loopback && include_broadcast {
-                return true;
+    for &b in bytes {
+        if b == b'.' {
+            if digits_in_octet == 0 || octet_idx == 3 {
+                return None;
             }
-
-            // Short-circuit evaluation to avoid unnecessary checks
-            if !include_private && ipv4.is_private() {
-                return false;
+            octets[octet_idx] = current_val as u8;
+            octet_idx += 1;
+            current_val = 0;
+            digits_in_octet = 0;
+        } else if b.is_ascii_digit() {
+            let digit = (b - b'0') as u16;
+            // Check for leading zero
+            if digits_in_octet > 0 && current_val == 0 {
+                return None;
             }
-
-            if !include_loopback && ipv4.is_loopback() {
-                return false;
+            current_val = current_val * 10 + digit;
+            if current_val > 255 {
+                return None;
             }
-
-            if !include_broadcast && (ipv4.is_broadcast() || ipv4.is_link_local()) {
-                return false;
-            }
-
-            // For "only routable" validation, we'll defer to the GeoIPSed component
-            true
+            digits_in_octet += 1;
+        } else {
+            return None;
         }
-        _ => false, // Not an IPv4
     }
+
+    if octet_idx != 3 || digits_in_octet == 0 {
+        return None;
+    }
+    octets[3] = current_val as u8;
+
+    Some(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
 }
 
 /// Validate an IPv6 address

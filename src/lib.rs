@@ -69,14 +69,15 @@
 //! ```
 
 pub mod error;
-pub mod extractor;
 pub mod files;
 pub mod geoip;
 pub mod input;
 pub mod mmdb;
-pub mod tag;
 pub mod template;
 
 /// Re-export key traits for custom MMDB format support
 pub use crate::error::Error;
 pub use crate::mmdb::{MmdbProvider, ProviderRegistry, TemplateField};
+
+/// Re-export IP extraction types from the sub-crate
+pub use ip_extractor::{Extractor, ExtractorBuilder, Tag, Tagged, TextData};

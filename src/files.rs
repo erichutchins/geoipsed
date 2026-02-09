@@ -4,9 +4,8 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-use crate::extractor::Extractor;
 use crate::input::FileOrStdin;
-use crate::tag::{Tag, Tagged, TextData};
+use crate::{Tag, Tagged, TextData, Extractor};
 
 /// Helper function to tag content and write as JSON.
 ///

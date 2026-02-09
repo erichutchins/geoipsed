@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use geoipsed::extractor::ExtractorBuilder;
-use geoipsed::tag::{Tag, Tagged};
+use geoipsed::{ExtractorBuilder, Tag, Tagged};
 use std::ops::Range;
 
 // Generate test data for extraction benchmarks
