@@ -80,4 +80,4 @@ pub use crate::error::Error;
 pub use crate::mmdb::{MmdbProvider, ProviderRegistry, TemplateField};
 
 /// Re-export IP extraction types from the sub-crate
-pub use ip_extractor::{Extractor, ExtractorBuilder, Tag, Tagged, TextData};
+pub use ip_extract::{Extractor, ExtractorBuilder, Tag, Tagged, TextData};

@@ -18,6 +18,8 @@ pub struct Tag {
 
 impl Tag {
     /// Create a new tag for an IP address.
+    ///
+    /// The `ip` should be the literal text of the IP address as found in the input.
     #[inline]
     pub fn new<S: Into<String>>(ip: S) -> Tag {
         Tag {
@@ -27,14 +29,16 @@ impl Tag {
         }
     }
 
-    /// Set the range of this tag in the original text.
+    /// Set the byte range [start, end) where this tag was found in the original text.
     #[inline]
     pub fn with_range(mut self, range: Range<usize>) -> Self {
         self.range = Some(range);
         self
     }
 
-    /// Set the decorated version of this IP.
+    /// Set a "decorated" version of the IP (e.g., with geolocation metadata).
+    ///
+    /// This string will be used instead of the original IP when calling `Tagged::write`.
     #[inline]
     pub fn with_decoration<S: Into<String>>(mut self, decorated: S) -> Self {
         self.decorated = Some(decorated.into());
@@ -81,7 +85,9 @@ pub struct TextData {
 }
 
 impl Tagged {
-    /// Create a new tagged text.
+    /// Create a new `Tagged` container for a slice of text.
+    ///
+    /// This container holds the original text and will collect any `Tag`s found within it.
     #[inline]
     pub fn new(text: &[u8]) -> Tagged {
         // Pre-allocate a reasonable capacity for tags based on text length
@@ -93,7 +99,9 @@ impl Tagged {
         }
     }
 
-    /// Add a tag to this text.
+    /// Adds a tag to this text.
+    ///
+    /// The tag should contain a range that corresponds to its position in `self.text()`.
     #[inline]
     pub fn tag(mut self, tag: Tag) -> Self {
         self.tags.push(tag);
@@ -112,13 +120,18 @@ impl Tagged {
         &self.text
     }
 
-    /// Set the text data for JSON serialization.
+    /// Explicitly sets the text data used for JSON serialization.
     #[inline]
     pub fn set_text_data(&mut self, data: TextData) {
         self.text_data = Some(data);
     }
 
-    /// Write the tagged text to a writer, replacing the IP addresses with their decorated versions.
+    /// Writes the text to the given writer, replacing tagged IPs with their decorated versions.
+    ///
+    /// If a tag has a `decorated()` value, that value is written instead of the original
+    /// bytes in its `range()`. If no decoration is present, the original bytes are written.
+    ///
+    /// Tags MUST be sorted by their start position for this to work correctly.
     #[inline]
     pub fn write<W: Write>(&self, wtr: &mut W) -> io::Result<()> {
         // Fast path for no tags
@@ -216,7 +229,9 @@ impl Tagged {
         Ok(())
     }
 
-    /// Write the tagged text as JSON to a writer.
+    /// Writes the `Tagged` object as a JSON object to the given writer.
+    ///
+    /// This is useful for exporting structured metadata about the IPs found in the text.
     #[inline]
     pub fn write_json<W: Write + ?Sized>(&mut self, wtr: &mut W) -> io::Result<()> {
         // Set the text data for JSON serialization

@@ -1,9 +1,15 @@
 [package]
-name = "ip-extractor"
+name = "ip-extract"
 version = "0.1.0"
 edition = "2021"
 authors = ["Eric Hutchins"]
 description = "High-performance IP address extraction and tagging engine"
+license = "Unlicense OR MIT"
+repository = "https://github.com/erichutchins/geoipsed"
+homepage = "https://github.com/erichutchins/geoipsed"
+documentation = "https://docs.rs/ip-extractor"
+keywords = ["ip", "extraction", "regex", "tagging", "parser"]
+categories = ["text-processing", "network-programming"]
 
 [dependencies]
 regex-syntax = "0.8.9"
