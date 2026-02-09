@@ -8,16 +8,9 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::process::ExitCode;
 use termcolor::{ColorChoice, StandardStream};
 
-pub mod extractor;
-pub mod files;
-pub mod geoip;
-pub mod input;
-pub mod mmdb;
-pub mod tag;
-pub mod template;
-
+// Use modules from the library instead of redefining them
+use geoipsed::{files, geoip, mmdb, input, ExtractorBuilder, Tag, Tagged};
 use input::FileOrStdin;
-use tag::{Tag, Tagged};
 
 /// Check if the error chain contains a broken pipe error.
 #[inline(always)]
@@ -225,7 +218,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     )?;
 
     // Build the IP extractor with appropriate settings
-    let extractor = extractor::ExtractorBuilder::new()
+    let extractor = ExtractorBuilder::new()
         .ipv4(true)
         .ipv6(true)
         .private_ips(include_private)

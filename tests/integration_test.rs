@@ -1,9 +1,8 @@
 use std::env;
 use std::path::Path;
 
-use geoipsed::extractor::{Extractor, ExtractorBuilder};
+use geoipsed::{Extractor, ExtractorBuilder, Tag, Tagged};
 use geoipsed::geoip::GeoIPSed;
-use geoipsed::tag::{Tag, Tagged};
 use termcolor::ColorChoice;
 
 // Set up the test environment

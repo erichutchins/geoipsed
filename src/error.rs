@@ -37,7 +37,7 @@ pub enum Error {
 
     /// A regex compilation error.
     #[error("regex error: {0}")]
-    Regex(#[from] regex_automata::meta::BuildError),
+    Regex(#[from] anyhow::Error),
 }
 
 /// Convenience type alias for Results using the library error.

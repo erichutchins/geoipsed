@@ -1,6 +1,5 @@
 use anyhow::Result;
-use geoipsed::extractor::ExtractorBuilder;
-use geoipsed::tag::{Tag, Tagged, TextData};
+use geoipsed::{ExtractorBuilder, Tag, Tagged, TextData};
 use std::io::stdout;
 
 fn main() -> Result<()> {
@@ -19,7 +18,8 @@ fn main() -> Result<()> {
 
     // Find and tag all IP addresses
     for range in extractor.find_iter(text.as_bytes()) {
-        let ip_str = String::from_utf8_lossy(&text.as_bytes()[range.clone()]).to_string();
+        let ip_slice = &text.as_bytes()[range.clone()];
+        let ip_str = String::from_utf8_lossy(ip_slice).to_string();
         tagged = tagged.tag(Tag::new(ip_str).with_range(range));
     }
 
