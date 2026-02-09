@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use termcolor::{ColorChoice, StandardStream};
 
 // Use modules from the library instead of redefining them
-use geoipsed::{files, geoip, mmdb, input, ExtractorBuilder, Tag, Tagged};
+use geoipsed::{files, geoip, input, mmdb, ExtractorBuilder, Tag, Tagged};
 use input::FileOrStdin;
 
 /// Check if the error chain contains a broken pipe error.
