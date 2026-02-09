@@ -237,7 +237,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     }
 
     // Use a larger initial capacity for cache to reduce rehashing
-    let mut cache: HashMap<String, String> =
+    let mut cache: HashMap<Vec<u8>, String> =
         HashMap::with_capacity_and_hasher(4096, Default::default());
     let only_matching = args.only_matching;
     let tag_mode = args.tag;
@@ -257,16 +257,18 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                 let len = buf.len();
 
                 for range in extractor.find_iter(buf) {
-                    let ipstr = std::str::from_utf8(&buf[range.clone()]).unwrap_or("decode error");
+                    let ip_bytes = &buf[range.clone()];
 
-                    if let Some(cached) = cache.get(ipstr) {
+                    if let Some(cached) = cache.get(ip_bytes) {
                         out.write_all(cached.as_bytes())?;
                         out.write_all(b"\n")?;
                     } else {
+                        // Only perform UTF-8 validation on cache miss
+                        let ipstr = std::str::from_utf8(ip_bytes).unwrap_or("decode error");
                         let result = geoipdb.lookup(ipstr);
                         out.write_all(result.as_bytes())?;
                         out.write_all(b"\n")?;
-                        cache.insert(ipstr.to_owned(), result);
+                        cache.insert(ip_bytes.to_vec(), result);
                     }
                 }
                 reader.consume(len);
@@ -295,15 +297,16 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                         // Write text before the match
                         out.write_all(&line[last_pos..range.start])?;
 
-                        let ipstr =
-                            std::str::from_utf8(&line[range.clone()]).unwrap_or("decode error");
+                        let ip_bytes = &line[range.clone()];
 
-                        if let Some(cached) = cache.get(ipstr) {
+                        if let Some(cached) = cache.get(ip_bytes) {
                             out.write_all(cached.as_bytes())?;
                         } else {
+                            // Only perform UTF-8 validation on cache miss
+                            let ipstr = std::str::from_utf8(ip_bytes).unwrap_or("decode error");
                             let result = geoipdb.lookup(ipstr);
                             out.write_all(result.as_bytes())?;
-                            cache.insert(ipstr.to_owned(), result);
+                            cache.insert(ip_bytes.to_vec(), result);
                         }
                         last_pos = range.end;
                     }
