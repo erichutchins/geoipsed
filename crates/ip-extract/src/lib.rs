@@ -1,3 +1,24 @@
+//! High-performance IP address extraction and tagging engine.
+//!
+//! This crate provides the `Extractor` for finding IPv4 and IPv6 addresses in raw bytes,
+//! and the `Tagged` system for generating decorated output or JSON metadata.
+//!
+//! # Examples
+//!
+//! ```
+//! use ip_extract::ExtractorBuilder;
+//!
+//! let extractor = ExtractorBuilder::new()
+//!     .ipv4(true)
+//!     .private_ips(true)
+//!     .build()
+//!     .unwrap();
+//!
+//! let haystack = b"Local: 192.168.1.1, Remote: 8.8.8.8";
+//! let matches: Vec<_> = extractor.find_iter(haystack).collect();
+//! assert_eq!(matches.len(), 2);
+//! ```
+
 use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Range;
@@ -9,7 +30,7 @@ use regex_syntax::hir::Hir;
 mod tag;
 pub use tag::{Tag, Tagged, TextData};
 
-/// The types of validators we support
+/// Internal validator types for different IP versions.
 #[derive(Clone, Debug)]
 enum ValidatorType {
     IPv4 {
@@ -78,7 +99,11 @@ pub struct Extractor {
 }
 
 impl Extractor {
-    /// Return an iterator of IP address matches found in the haystack.
+    /// Returns an iterator over all valid IP address matches in the given haystack.
+    ///
+    /// The iterator yields `Range<usize>` objects representing the start and end
+    /// positions of each match in the `haystack`. Matches are found from left-to-right.
+    /// Only matches that pass the configured validation rules are returned.
     #[inline]
     pub fn find_iter<'a>(&'a self, haystack: &'a [u8]) -> impl Iterator<Item = Range<usize>> + 'a {
         self.regex.captures_iter(haystack).filter_map(move |caps| {
@@ -109,7 +134,12 @@ pub struct ExtractorBuilder {
 }
 
 impl ExtractorBuilder {
-    /// Create a new builder with default settings (both IPv4 and IPv6, exclude special IPs).
+    /// Create a new builder with default settings.
+    ///
+    /// By default:
+    /// - IPv4 is enabled.
+    /// - IPv6 is enabled.
+    /// - Private, Loopback, and Broadcast IPs are **excluded**.
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -122,49 +152,56 @@ impl ExtractorBuilder {
         }
     }
 
-    /// Include or exclude IPv4 addresses.
+    /// Set whether to include IPv4 addresses in the search.
     #[inline]
     pub fn ipv4(&mut self, include: bool) -> &mut Self {
         self.include_ipv4 = include;
         self
     }
 
-    /// Include or exclude IPv6 addresses.
+    /// Set whether to include IPv6 addresses in the search.
     #[inline]
     pub fn ipv6(&mut self, include: bool) -> &mut Self {
         self.include_ipv6 = include;
         self
     }
 
-    /// Include or exclude private IP addresses.
+    /// Set whether to include private (RFC 1918) IP addresses.
     #[inline]
     pub fn private_ips(&mut self, include: bool) -> &mut Self {
         self.include_private = include;
         self
     }
 
-    /// Include or exclude loopback IP addresses.
+    /// Set whether to include loopback (127.0.0.1/::1) IP addresses.
     #[inline]
     pub fn loopback_ips(&mut self, include: bool) -> &mut Self {
         self.include_loopback = include;
         self
     }
 
-    /// Include or exclude broadcast IP addresses.
+    /// Set whether to include broadcast and link-local IP addresses.
     #[inline]
     pub fn broadcast_ips(&mut self, include: bool) -> &mut Self {
         self.include_broadcast = include;
         self
     }
 
-    /// Only include internet-routable IP addresses (ones with valid ASN entries).
+    /// Set whether to only include internet-routable IP addresses.
+    ///
+    /// Note: Actual routability check usually requires external metadata (like ASN database),
+    /// so this flag is primarily used as a hint for higher-level filters.
     #[inline]
     pub fn only_routable(&mut self, only: bool) -> &mut Self {
         self.only_routable = only;
         self
     }
 
-    /// Build the extractor with the current settings.
+    /// Consumes the builder and returns a compiled `Extractor`.
+    ///
+    /// This will compile the underlying regex engine. Returns an error if:
+    /// - No IP versions are enabled.
+    /// - The internal regex patterns fail to compile.
     pub fn build(&self) -> anyhow::Result<Extractor> {
         // Pre-allocate vectors with known capacity for better performance
         let pattern_count = self.include_ipv4 as usize + self.include_ipv6 as usize;
