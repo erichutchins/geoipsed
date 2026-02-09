@@ -22,16 +22,16 @@ fn main() -> Result<()> {
     for range in extractor.find_iter(input) {
         let ip_bytes = &input[range.clone()];
         let ip_str = std::str::from_utf8(ip_bytes)?;
-        
+
         println!("  Found: {} at {:?}", ip_str, range);
 
-        // Add a tag to our container. 
+        // Add a tag to our container.
         // We can also add "decoration" (simulating a DB lookup).
         let decoration = format!("[{}]", ip_str); // Simple decoration
         tagged = tagged.tag(
             Tag::new(ip_str)
                 .with_range(range)
-                .with_decoration(decoration)
+                .with_decoration(decoration),
         );
     }
 
