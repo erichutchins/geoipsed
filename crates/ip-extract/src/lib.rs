@@ -250,10 +250,7 @@ impl ExtractorBuilder {
             ) // Use leftmost-first semantics
             .build_many_from_hir(&patterns)?;
 
-        Ok(Extractor {
-            regex,
-            validators,
-        })
+        Ok(Extractor { regex, validators })
     }
 }
 
