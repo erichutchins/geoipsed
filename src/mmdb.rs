@@ -1,12 +1,52 @@
+use anyhow::{Context, Result};
+use camino::Utf8PathBuf;
+use maxminddb::Reader;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
-use camino::Utf8PathBuf;
-use maxminddb::geoip2::{Asn, City};
-use maxminddb::Reader;
-use serde::Serialize;
+#[derive(Deserialize)]
+struct FastAsn {
+    autonomous_system_number: Option<u32>,
+    autonomous_system_organization: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FastCity {
+    city: Option<FastNames>,
+    continent: Option<FastCode>,
+    country: Option<FastCountry>,
+    location: Option<FastLocation>,
+}
+
+#[derive(Deserialize)]
+struct FastNames {
+    names: Option<FastNamesMap>,
+}
+
+#[derive(Deserialize)]
+struct FastNamesMap {
+    en: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FastCode {
+    code: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FastCountry {
+    iso_code: Option<String>,
+    names: Option<FastNamesMap>,
+}
+
+#[derive(Deserialize)]
+struct FastLocation {
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+    time_zone: Option<String>,
+}
 
 /// Represents a field that can be used in templates
 #[derive(Debug, Clone, Serialize)]
@@ -63,10 +103,19 @@ pub trait MmdbProvider: fmt::Debug {
     fn initialize(&mut self, path: &Path) -> Result<()>;
 
     /// Lookup data for an IP address and format it according to the template
-    fn lookup(&self, ip: &str, template: &str) -> Result<String>;
+    fn lookup(&self, ip: IpAddr, ip_str: &str, template: &crate::template::Template) -> Result<String>;
+
+    /// Lookup data for an IP address and write it directly to a writer
+    fn lookup_and_write(
+        &self,
+        wtr: &mut dyn std::io::Write,
+        ip: IpAddr,
+        ip_str: &str,
+        template: &crate::template::Template,
+    ) -> Result<()>;
 
     /// Checks if an IP address has a valid ASN entry (used for routability check)
-    fn has_asn(&self, ip: &str) -> bool;
+    fn has_asn(&self, ip: IpAddr) -> bool;
 }
 
 /// Provider for MaxMind GeoIP2 databases
@@ -74,10 +123,10 @@ pub trait MmdbProvider: fmt::Debug {
 pub struct MaxMindProvider {
     name: String,
     initialized: bool,
-    asn_reader: Option<Reader<Vec<u8>>>,
-    city_reader: Option<Reader<Vec<u8>>>,
-    ipv4_reader: Option<Reader<Vec<u8>>>,
-    ipv6_reader: Option<Reader<Vec<u8>>>,
+    asn_reader: Option<Reader<maxminddb::Mmap>>,
+    city_reader: Option<Reader<maxminddb::Mmap>>,
+    ipv4_reader: Option<Reader<maxminddb::Mmap>>,
+    ipv6_reader: Option<Reader<maxminddb::Mmap>>,
 }
 
 impl Default for MaxMindProvider {
@@ -192,14 +241,14 @@ impl MmdbProvider for MaxMindProvider {
         // Try to open the main databases first (normal operation)
         let asn_path = path.join("GeoLite2-ASN.mmdb");
         if asn_path.exists() {
-            self.asn_reader = Some(Reader::open_readfile(&asn_path).with_context(|| {
+            self.asn_reader = Some(unsafe { Reader::open_mmap(&asn_path) }.with_context(|| {
                 format!("Failed to open ASN database at {}", asn_path.display())
             })?);
         }
 
         let city_path = path.join("GeoLite2-City.mmdb");
         if city_path.exists() {
-            self.city_reader = Some(Reader::open_readfile(&city_path).with_context(|| {
+            self.city_reader = Some(unsafe { Reader::open_mmap(&city_path) }.with_context(|| {
                 format!("Failed to open City database at {}", city_path.display())
             })?);
         }
@@ -211,7 +260,7 @@ impl MmdbProvider for MaxMindProvider {
 
             if ipv4_asn_path.exists() {
                 self.ipv4_reader =
-                    Some(Reader::open_readfile(&ipv4_asn_path).with_context(|| {
+                    Some(unsafe { Reader::open_mmap(&ipv4_asn_path) }.with_context(|| {
                         format!(
                             "Failed to open IPv4 ASN database at {}",
                             ipv4_asn_path.display()
@@ -221,7 +270,7 @@ impl MmdbProvider for MaxMindProvider {
 
             if ipv6_asn_path.exists() {
                 self.ipv6_reader =
-                    Some(Reader::open_readfile(&ipv6_asn_path).with_context(|| {
+                    Some(unsafe { Reader::open_mmap(&ipv6_asn_path) }.with_context(|| {
                         format!(
                             "Failed to open IPv6 ASN database at {}",
                             ipv6_asn_path.display()
@@ -236,7 +285,7 @@ impl MmdbProvider for MaxMindProvider {
 
             if ipv4_city_path.exists() {
                 self.ipv4_reader =
-                    Some(Reader::open_readfile(&ipv4_city_path).with_context(|| {
+                    Some(unsafe { Reader::open_mmap(&ipv4_city_path) }.with_context(|| {
                         format!(
                             "Failed to open IPv4 City database at {}",
                             ipv4_city_path.display()
@@ -246,7 +295,7 @@ impl MmdbProvider for MaxMindProvider {
 
             if ipv6_city_path.exists() {
                 self.ipv6_reader =
-                    Some(Reader::open_readfile(&ipv6_city_path).with_context(|| {
+                    Some(unsafe { Reader::open_mmap(&ipv6_city_path) }.with_context(|| {
                         format!(
                             "Failed to open IPv6 City database at {}",
                             ipv6_city_path.display()
@@ -269,127 +318,148 @@ impl MmdbProvider for MaxMindProvider {
         Ok(())
     }
 
-    fn lookup(&self, ip_str: &str, template: &str) -> Result<String> {
-        use crate::template::Template;
-
+    fn lookup(&self, ip: IpAddr, ip_str: &str, template: &crate::template::Template) -> Result<String> {
         if !self.initialized {
             anyhow::bail!("Provider not initialized");
         }
 
-        // Parse the IP address
-        let ip: IpAddr = ip_str.parse().context("Invalid IP address")?;
-
-        // Choose the appropriate reader based on IP version
         let is_ipv4 = matches!(ip, IpAddr::V4(_));
 
         // Get ASN information
-        let mut asn_num_val = 0u32;
-        let mut asn_org_val = "";
-
+        let mut asn_record: Option<FastAsn> = None;
         if let Some(ref asn_reader) = self.asn_reader {
-            if let Ok(Some(asn_record)) = asn_reader.lookup(ip).and_then(|r| r.decode::<Asn>()) {
-                asn_num_val = asn_record.autonomous_system_number.unwrap_or(0);
-                asn_org_val = asn_record.autonomous_system_organization.unwrap_or("");
-            }
+            asn_record = match asn_reader.lookup(ip) {
+                Ok(lookup) => lookup.decode::<FastAsn>().ok().flatten(),
+                Err(_) => None,
+            };
         } else if (is_ipv4 && self.ipv4_reader.is_some())
             || (!is_ipv4 && self.ipv6_reader.is_some())
         {
-            // If we have separate IPv4/IPv6 readers, use the appropriate one
-            let reader = if is_ipv4 {
-                &self.ipv4_reader
-            } else {
-                &self.ipv6_reader
-            };
+            let reader = if is_ipv4 { &self.ipv4_reader } else { &self.ipv6_reader };
             if let Some(ref reader) = reader {
-                if let Ok(Some(asn_record)) = reader.lookup(ip).and_then(|r| r.decode::<Asn>()) {
-                    asn_num_val = asn_record.autonomous_system_number.unwrap_or(0);
-                    asn_org_val = asn_record.autonomous_system_organization.unwrap_or("");
-                }
+                asn_record = match reader.lookup(ip) {
+                    Ok(lookup) => lookup.decode::<FastAsn>().ok().flatten(),
+                    Err(_) => None,
+                };
             }
         }
-
-        let asnnum = if asn_num_val == 0 {
-            "0".to_string()
-        } else {
-            asn_num_val.to_string()
-        };
-        let asnorg = asn_org_val.to_string();
 
         // Get City/Country information
-        let mut continent_val = "";
-        let mut country_iso_val = "";
-        let mut country_full_val = "";
-        let mut city_val = "";
-        let mut timezone_val = "";
-        let mut lat_val = 0.0;
-        let mut lon_val = 0.0;
-
+        let mut city_record: Option<FastCity> = None;
         if let Some(ref city_reader) = self.city_reader {
-            if let Ok(Some(city_record)) = city_reader.lookup(ip).and_then(|r| r.decode::<City>()) {
-                continent_val = city_record.continent.code.unwrap_or("");
-                country_iso_val = city_record.country.iso_code.unwrap_or("");
-                country_full_val = city_record.country.names.english.unwrap_or("");
-                city_val = city_record.city.names.english.unwrap_or("");
-                timezone_val = city_record.location.time_zone.unwrap_or("");
-                lat_val = city_record.location.latitude.unwrap_or(0.0);
-                lon_val = city_record.location.longitude.unwrap_or(0.0);
-            }
+            city_record = match city_reader.lookup(ip) {
+                Ok(lookup) => lookup.decode::<FastCity>().ok().flatten(),
+                Err(_) => None,
+            };
         }
 
-        let continent = continent_val.to_string();
-        let country_iso = country_iso_val.to_string();
-        let country_full = country_full_val.to_string();
-        let city = city_val.to_string();
-        let timezone = timezone_val.to_string();
-        let latitude = if lat_val == 0.0 {
-            "0.0".to_string()
-        } else {
-            lat_val.to_string()
-        };
-        let longitude = if lon_val == 0.0 {
-            "0.0".to_string()
-        } else {
-            lon_val.to_string()
-        };
+        // Pre-compute string values for numeric fields
+        let asn_num = asn_record.as_ref().and_then(|r| r.autonomous_system_number).unwrap_or(0);
+        let asn_num_str = if asn_num == 0 { "0".to_string() } else { asn_num.to_string() };
 
-        // Compile and render the template
-        let tmpl = Template::compile(template)
-            .map_err(|e| anyhow::anyhow!("Template compilation error: {}", e))?;
+        let lat_val = city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.latitude).unwrap_or(0.0);
+        let lon_val = city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.longitude).unwrap_or(0.0);
+        let latitude_str = if lat_val == 0.0 { "0.0".to_string() } else { lat_val.to_string() };
+        let longitude_str = if lon_val == 0.0 { "0.0".to_string() } else { lon_val.to_string() };
 
-        let result = tmpl.render(|field| match field {
+        let result = template.render(|field| match field {
             "ip" => ip_str,
-            "asnnum" => &asnnum,
-            "asnorg" => &asnorg,
-            "city" => &city,
-            "continent" => &continent,
-            "country_iso" => &country_iso,
-            "country_full" => &country_full,
-            "latitude" => &latitude,
-            "longitude" => &longitude,
-            "timezone" => &timezone,
+            "asnnum" => &asn_num_str,
+            "asnorg" => asn_record.as_ref().and_then(|r| r.autonomous_system_organization.as_deref()).unwrap_or(""),
+            "city" => city_record.as_ref().and_then(|r| r.city.as_ref()).and_then(|c| c.names.as_ref()).and_then(|n| n.en.as_deref()).unwrap_or(""),
+            "continent" => city_record.as_ref().and_then(|r| r.continent.as_ref()).and_then(|c| c.code.as_deref()).unwrap_or(""),
+            "country_iso" => city_record.as_ref().and_then(|r| r.country.as_ref()).and_then(|c| c.iso_code.as_deref()).unwrap_or(""),
+            "country_full" => city_record.as_ref().and_then(|r| r.country.as_ref()).and_then(|c| c.names.as_ref()).and_then(|n| n.en.as_deref()).unwrap_or(""),
+            "latitude" => &latitude_str,
+            "longitude" => &longitude_str,
+            "timezone" => city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.time_zone.as_deref()).unwrap_or(""),
             _ => "",
         });
 
-        // Replace spaces with underscores for better terminal display
         Ok(result.replace(' ', "_"))
     }
 
-    fn has_asn(&self, ip_str: &str) -> bool {
+    fn lookup_and_write(
+        &self,
+        wtr: &mut dyn std::io::Write,
+        ip: IpAddr,
+        ip_str: &str,
+        template: &crate::template::Template,
+    ) -> Result<()> {
+        if !self.initialized {
+            anyhow::bail!("Provider not initialized");
+        }
+
+        let is_ipv4 = matches!(ip, IpAddr::V4(_));
+        let mut asn_record: Option<FastAsn> = None;
+
+        if let Some(ref asn_reader) = self.asn_reader {
+            asn_record = match asn_reader.lookup(ip) {
+                Ok(lookup) => lookup.decode::<FastAsn>().ok().flatten(),
+                Err(_) => None,
+            };
+        } else {
+            let reader = if is_ipv4 { &self.ipv4_reader } else { &self.ipv6_reader };
+            if let Some(ref reader) = reader {
+                asn_record = match reader.lookup(ip) {
+                    Ok(lookup) => lookup.decode::<FastAsn>().ok().flatten(),
+                    Err(_) => None,
+                };
+            }
+        }
+
+        let mut city_record: Option<FastCity> = None;
+        if let Some(ref city_reader) = self.city_reader {
+            city_record = match city_reader.lookup(ip) {
+                Ok(lookup) => lookup.decode::<FastCity>().ok().flatten(),
+                Err(_) => None,
+            };
+        }
+
+        let asn_num = asn_record.as_ref().and_then(|r| r.autonomous_system_number).unwrap_or(0);
+        let asn_num_str = if asn_num == 0 { "0".to_string() } else { asn_num.to_string() };
+        let lat_val = city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.latitude).unwrap_or(0.0);
+        let lon_val = city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.longitude).unwrap_or(0.0);
+        let latitude_str = if lat_val == 0.0 { "0.0".to_string() } else { lat_val.to_string() };
+        let longitude_str = if lon_val == 0.0 { "0.0".to_string() } else { lon_val.to_string() };
+
+        template.write(wtr, |field| match field {
+            "ip" => ip_str,
+            "asnnum" => &asn_num_str,
+            "asnorg" => asn_record.as_ref().and_then(|r| r.autonomous_system_organization.as_deref()).unwrap_or(""),
+            "city" => city_record.as_ref().and_then(|r| r.city.as_ref()).and_then(|c| c.names.as_ref()).and_then(|n| n.en.as_deref()).unwrap_or(""),
+            "continent" => city_record.as_ref().and_then(|r| r.continent.as_ref()).and_then(|c| c.code.as_deref()).unwrap_or(""),
+            "country_iso" => city_record.as_ref().and_then(|r| r.country.as_ref()).and_then(|c| c.iso_code.as_deref()).unwrap_or(""),
+            "country_full" => city_record.as_ref().and_then(|r| r.country.as_ref()).and_then(|c| c.names.as_ref()).and_then(|n| n.en.as_deref()).unwrap_or(""),
+            "latitude" => &latitude_str,
+            "longitude" => &longitude_str,
+            "timezone" => city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.time_zone.as_deref()).unwrap_or(""),
+            _ => "",
+        })?;
+
+        Ok(())
+    }
+
+    fn has_asn(&self, ip: IpAddr) -> bool {
         if !self.initialized {
             return false;
         }
 
-        // Parse the IP address
-        let ip: IpAddr = match ip_str.parse() {
-            Ok(ip) => ip,
-            Err(_) => return false,
+        // Check ASN reader
+        if let Some(ref asn_reader) = self.asn_reader {
+            return asn_reader.lookup(ip).is_ok();
+        }
+
+        // Check IPv4/IPv6 specific readers
+        let is_ipv4 = matches!(ip, IpAddr::V4(_));
+        let reader = if is_ipv4 {
+            &self.ipv4_reader
+        } else {
+            &self.ipv6_reader
         };
 
-        // Check if ASN info is available
-        if let Some(ref asn_reader) = self.asn_reader {
-            if let Ok(Some(asn_record)) = asn_reader.lookup(ip).and_then(|r| r.decode::<Asn>()) {
-                return asn_record.autonomous_system_number.is_some();
-            }
+        if let Some(ref reader) = reader {
+            return reader.lookup(ip).is_ok();
         }
 
         false
@@ -439,6 +509,17 @@ impl ProviderRegistry {
         } else {
             anyhow::bail!("Unknown provider: {}", name)
         }
+    }
+
+    /// Get the active provider, taking ownership of it
+    pub fn get_active_provider_owned(&mut self) -> Result<Box<dyn MmdbProvider>> {
+        let name = self
+            .active_provider
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No active provider set"))?;
+        self.providers
+            .remove(name)
+            .ok_or_else(|| anyhow::anyhow!("Active provider '{}' not found in registry", name))
     }
 
     /// Get the active provider
@@ -495,17 +576,16 @@ impl ProviderRegistry {
     }
 
     /// Lookup data for an IP address using the active provider
-    pub fn lookup(&self, ip: &str, template: &str) -> Result<String> {
-        self.get_active_provider()?.lookup(ip, template)
+    pub fn lookup(&self, ip: IpAddr, ip_str: &str, template: &crate::template::Template) -> Result<String> {
+        self.get_active_provider()?.lookup(ip, ip_str, template)
     }
 
     /// Check if an IP has a valid ASN entry using the active provider
-    pub fn has_asn(&self, ip: &str) -> bool {
+    pub fn has_asn(&self, ip: IpAddr) -> bool {
         if let Ok(provider) = self.get_active_provider() {
-            provider.has_asn(ip)
-        } else {
-            false
+            return provider.has_asn(ip);
         }
+        false
     }
 
     /// Get available fields for the active provider

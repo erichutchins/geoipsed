@@ -1,32 +1,19 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use camino::Utf8PathBuf;
-use maxminddb::geoip2::{Asn, City};
 use std::net::IpAddr;
 use termcolor::ColorChoice;
 
-use crate::mmdb::ProviderRegistry;
+use crate::mmdb::{MmdbProvider, ProviderRegistry};
 use crate::template::Template;
-
-// Database paths
-const DEFAULT_MMDB_PATH: &str = "/usr/share/GeoIP";
-const ASN_DB_FILENAME: &str = "GeoLite2-ASN.mmdb";
-const CITY_DB_FILENAME: &str = "GeoLite2-City.mmdb";
 
 // Default template format
 const DEFAULT_TEMPLATE: &str = "<{ip}|AS{asnnum}_{asnorg}|{country_iso}|{city}>";
 
-// Constants for default field values
-const EMPTY_STR: &str = "";
-const ZERO_STR: &str = "0";
-const ZERO_FLOAT_STR: &str = "0.0";
-
 pub struct GeoIPSed {
-    asnreader: maxminddb::Reader<Vec<u8>>,
-    cityreader: maxminddb::Reader<Vec<u8>>,
     pub color: ColorChoice,
     template: Template,
     pub only_routable: bool,
-    pub provider_registry: Option<ProviderRegistry>,
+    pub provider: Box<dyn MmdbProvider>,
 }
 
 impl GeoIPSed {
@@ -36,48 +23,40 @@ impl GeoIPSed {
         color: ColorChoice,
         only_routable: bool,
     ) -> Result<Self> {
-        let dbpath = mmdbpath.unwrap_or_else(|| Utf8PathBuf::from(DEFAULT_MMDB_PATH));
-        let mut template_str = user_template.unwrap_or_else(|| DEFAULT_TEMPLATE.to_string());
+        let mut registry = ProviderRegistry::default();
+        registry.initialize_active_provider(mmdbpath)?;
+        let provider = registry.get_active_provider_owned()?;
 
-        if color == ColorChoice::Always {
-            // if we are printing color, bookend the template with ansi red escapes
-            template_str = format!("\x1b[1;31m{}\x1b[0;0m", template_str);
-        }
+        let template_str = if color == ColorChoice::Always {
+            format!(
+                "\x1b[1;31m{}\x1b[0;0m",
+                user_template.unwrap_or_else(|| DEFAULT_TEMPLATE.to_string())
+            )
+        } else {
+            user_template.unwrap_or_else(|| DEFAULT_TEMPLATE.to_string())
+        };
 
-        // Compile the template once during initialization
         let template = Template::compile(&template_str)
             .map_err(|e| anyhow::anyhow!("Invalid template: {}", e))?;
 
-        // Open database files
-        let asn_path = dbpath.join(ASN_DB_FILENAME);
-        let city_path = dbpath.join(CITY_DB_FILENAME);
-
-        // Open ASN database
-        let asnreader = maxminddb::Reader::open_readfile(&asn_path)
-            .with_context(|| format!("Failed to open ASN database at {}", asn_path))?;
-
-        // Open City database
-        let cityreader = maxminddb::Reader::open_readfile(&city_path)
-            .with_context(|| format!("Failed to open City database at {}", city_path))?;
-
         Ok(Self {
-            asnreader,
-            cityreader,
             color,
             template,
             only_routable,
-            provider_registry: None,
+            provider,
         })
     }
 
     #[inline]
     pub fn new_with_provider(
-        mmdbpath: Option<Utf8PathBuf>,
+        _mmdbpath: Option<Utf8PathBuf>,
         user_template: Option<String>,
         color: ColorChoice,
         only_routable: bool,
-        provider_registry: ProviderRegistry,
+        mut provider_registry: ProviderRegistry,
     ) -> Result<Self> {
+        let provider = provider_registry.get_active_provider_owned()?;
+
         let template_str = if color == ColorChoice::Always {
             // if we are printing color, bookend the template with ansi red escapes
             format!(
@@ -92,131 +71,45 @@ impl GeoIPSed {
         let template = Template::compile(&template_str)
             .map_err(|e| anyhow::anyhow!("Invalid template: {}", e))?;
 
-        // For backwards compatibility, we still need the original readers
-        let dbpath = mmdbpath
-            .clone()
-            .unwrap_or_else(|| Utf8PathBuf::from(DEFAULT_MMDB_PATH));
-
-        // Open ASN database with error context
-        let asn_path = dbpath.join(ASN_DB_FILENAME);
-        let asnreader = maxminddb::Reader::open_readfile(&asn_path)
-            .with_context(|| format!("Failed to open ASN database at {}", asn_path))?;
-
-        // Open City database with error context
-        let city_path = dbpath.join(CITY_DB_FILENAME);
-        let cityreader = maxminddb::Reader::open_readfile(&city_path)
-            .with_context(|| format!("Failed to open City database at {}", city_path))?;
-
         Ok(Self {
-            asnreader,
-            cityreader,
             color,
             template,
             only_routable,
-            provider_registry: Some(provider_registry),
+            provider,
         })
     }
 
     #[inline]
-    pub fn lookup(&self, s: &str) -> String {
-        // Try to use the provider registry if available
-        if let Some(registry) = &self.provider_registry {
-            // Only proceed with valid IPs
-            if let Ok(_ip) = s.parse::<IpAddr>() {
-                // Check routability if needed
-                if self.only_routable && !registry.has_asn(s) {
-                    return s.to_string();
-                }
-
-                // Use the provider registry for lookup
-                if let Ok(result) = registry.lookup(s, &self.template.to_string()) {
-                    return result;
-                }
-            }
-
-            // Fall back to the original method if provider lookup fails
+    pub fn lookup(&self, ip: IpAddr, s: &str) -> String {
+        // Only proceed with routability check if needed
+        if self.only_routable && !self.provider.has_asn(ip) {
+            return s.to_string();
         }
 
-        // Legacy lookup method
-        let ip: IpAddr = match s.parse() {
-            Ok(ip) => ip,
-            // if not a valid IP address, just return it unchanged
-            Err(_) => return s.to_string(),
-        };
-
-        // Check if we need to validate for routability
-        if self.only_routable {
-            // Try to fetch ASN info to check if routable - just do a quick lookup
-            if self.asnreader.lookup(ip).is_err() {
-                return s.to_string();
-            }
+        // Use the provider for lookup
+        if let Ok(result) = self.provider.lookup(ip, s, &self.template) {
+            return result;
         }
 
-        // Initialize all fields with default values
-        let mut asnnum: u32 = 0;
-        let mut asnorg: &str = EMPTY_STR;
-        let mut city: &str = EMPTY_STR;
-        let mut continent: &str = EMPTY_STR;
-        let mut country_iso: &str = EMPTY_STR;
-        let mut country_full: &str = EMPTY_STR;
-        let mut latitude: f64 = 0.0;
-        let mut longitude: f64 = 0.0;
-        let mut timezone: &str = EMPTY_STR;
+        s.to_string()
+    }
 
-        // Look up ASN information
-        if let Ok(Some(asnrecord)) = self.asnreader.lookup(ip).and_then(|r| r.decode::<Asn>()) {
-            asnnum = asnrecord.autonomous_system_number.unwrap_or(0);
-            asnorg = asnrecord
-                .autonomous_system_organization
-                .unwrap_or(EMPTY_STR);
+    #[inline]
+    pub fn lookup_and_write<W: std::io::Write>(
+        &self,
+        wtr: &mut W,
+        ip: IpAddr,
+        s: &str,
+    ) -> Result<()> {
+        if self.only_routable && !self.provider.has_asn(ip) {
+            wtr.write_all(s.as_bytes())?;
+            return Ok(());
         }
 
-        // Look up city/country information
-        if let Ok(Some(cityrecord)) = self.cityreader.lookup(ip).and_then(|r| r.decode::<City>()) {
-            continent = cityrecord.continent.code.unwrap_or(EMPTY_STR);
-            country_iso = cityrecord.country.iso_code.unwrap_or(EMPTY_STR);
-            country_full = cityrecord.country.names.english.unwrap_or(EMPTY_STR);
-            city = cityrecord.city.names.english.unwrap_or(EMPTY_STR);
-            timezone = cityrecord.location.time_zone.unwrap_or(EMPTY_STR);
-            latitude = cityrecord.location.latitude.unwrap_or(0.0);
-            longitude = cityrecord.location.longitude.unwrap_or(0.0);
+        if self.provider.lookup_and_write(wtr, ip, s, &self.template).is_err() {
+            wtr.write_all(s.as_bytes())?;
         }
 
-        // Convert numeric fields to strings
-        let asnnum_str = if asnnum == 0 {
-            ZERO_STR
-        } else {
-            &asnnum.to_string()
-        };
-
-        let lat_str = if latitude == 0.0 {
-            ZERO_FLOAT_STR
-        } else {
-            &latitude.to_string()
-        };
-
-        let lon_str = if longitude == 0.0 {
-            ZERO_FLOAT_STR
-        } else {
-            &longitude.to_string()
-        };
-
-        // Render the template using closure-based lookup
-        let result = self.template.render(|field| match field {
-            "ip" => s,
-            "asnnum" => asnnum_str,
-            "asnorg" => asnorg,
-            "city" => city,
-            "continent" => continent,
-            "country_iso" => country_iso,
-            "country_full" => country_full,
-            "latitude" => lat_str,
-            "longitude" => lon_str,
-            "timezone" => timezone,
-            _ => EMPTY_STR,
-        });
-
-        // Replace spaces with underscores
-        result.replace(' ', "_")
+        Ok(())
     }
 }
