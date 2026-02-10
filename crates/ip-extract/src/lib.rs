@@ -95,7 +95,6 @@ impl ValidatorType {
 pub struct Extractor {
     regex: Regex,
     validators: Vec<ValidatorType>,
-    pattern_indices: Vec<usize>,
 }
 
 impl Extractor {
@@ -106,14 +105,12 @@ impl Extractor {
     /// Only matches that pass the configured validation rules are returned.
     #[inline]
     pub fn find_iter<'a>(&'a self, haystack: &'a [u8]) -> impl Iterator<Item = Range<usize>> + 'a {
-        self.regex.captures_iter(haystack).filter_map(move |caps| {
-            let pid = caps.pattern()?;
-            // Use the appropriate capture group based on the pattern index
-            let span = caps.get_group(self.pattern_indices[pid])?;
-            let range = span.range();
+        self.regex.find_iter(haystack).filter_map(move |m| {
+            let pid = m.pattern();
+            let range = m.range();
 
             // Validate the match using the corresponding validator
-            if !self.validators[pid].validate(&haystack[range.clone()]) {
+            if !self.validators[pid.as_usize()].validate(&haystack[range.clone()]) {
                 return None;
             }
 
@@ -207,7 +204,6 @@ impl ExtractorBuilder {
         let pattern_count = self.include_ipv4 as usize + self.include_ipv6 as usize;
         let mut patterns: Vec<Cow<'_, Hir>> = Vec::with_capacity(pattern_count);
         let mut validators: Vec<ValidatorType> = Vec::with_capacity(pattern_count);
-        let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern_count);
 
         // Add IPv4 pattern if included
         if self.include_ipv4 {
@@ -223,7 +219,6 @@ impl ExtractorBuilder {
                 include_broadcast: self.include_broadcast,
                 only_routable: self.only_routable,
             });
-            pattern_indices.push(0);
         }
 
         // Add IPv6 pattern if included
@@ -239,7 +234,6 @@ impl ExtractorBuilder {
                 include_loopback: self.include_loopback,
                 only_routable: self.only_routable,
             });
-            pattern_indices.push(0);
         }
 
         // Fast fail if no patterns selected
@@ -259,7 +253,6 @@ impl ExtractorBuilder {
         Ok(Extractor {
             regex,
             validators,
-            pattern_indices,
         })
     }
 }

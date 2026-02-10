@@ -47,12 +47,33 @@
 //!         Ok(())
 //!     }
 //!
-//!     fn lookup(&self, ip_str: &str, template: &str) -> Result<String> {
-//!         // Your lookup implementation here
-//!         Ok(template.replace("{ip}", ip_str))
+//!     fn lookup(
+//!         &self,
+//!         _ip: std::net::IpAddr,
+//!         ip_str: &str,
+//!         template: &crate::template::Template,
+//!     ) -> Result<String> {
+//!         Ok(template.render(|field| match field {
+//!             "ip" => ip_str,
+//!             _ => "",
+//!         }))
 //!     }
 //!
-//!     fn has_asn(&self, _ip_str: &str) -> bool {
+//!     fn lookup_and_write(
+//!         &self,
+//!         wtr: &mut dyn std::io::Write,
+//!         _ip: std::net::IpAddr,
+//!         ip_str: &str,
+//!         template: &crate::template::Template,
+//!     ) -> Result<()> {
+//!         template.write(wtr, |out, field| match field {
+//!             "ip" => out.write_all(ip_str.as_bytes()),
+//!             _ => Ok(()),
+//!         })?;
+//!         Ok(())
+//!     }
+//!
+//!     fn has_asn(&self, _ip: std::net::IpAddr) -> bool {
 //!         false
 //!     }
 //! }

@@ -38,7 +38,8 @@ strip = true
 
 [profile.dev-optimized]
 inherits = "release"
-debug = true
+debug = true            # Full debug info for symbols
+strip = false           # Don't strip symbols
 
 [dependencies]
 anyhow = "1.0.101"
@@ -53,6 +54,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 rustc-hash = "1.1.0"
 hashbrown = "0.16.1"
+itoa = "1.0.17"
+ryu = "1.0.23"
+ripline = "0.1.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"
