@@ -107,7 +107,7 @@ impl Template {
     /// This is a single-pass operation — values are never re-scanned for
     /// field references, so double-substitution cannot occur.
     #[inline]
-    pub fn render<'a>(&self, lookup: impl Fn(&str) -> &'a str) -> String {
+    pub fn render<'a>(&self, mut lookup: impl FnMut(&str) -> &'a str) -> String {
         let mut output = String::with_capacity(self.estimated_size);
         for part in &self.parts {
             match part {
@@ -116,6 +116,29 @@ impl Template {
             }
         }
         output
+    }
+
+    /// Renders the template and writes it to the writer.
+    #[inline]
+    pub fn write<'a, W: std::io::Write + ?Sized>(
+        &self,
+        wtr: &mut W,
+        mut lookup: impl FnMut(&str) -> &'a str,
+    ) -> std::io::Result<()> {
+        for part in &self.parts {
+            match part {
+                TemplatePart::Literal(s) => wtr.write_all(s.as_bytes())?,
+                TemplatePart::Field(f) => {
+                    let val = lookup(f);
+                    if val.contains(' ') {
+                        wtr.write_all(val.replace(' ', "_").as_bytes())?;
+                    } else {
+                        wtr.write_all(val.as_bytes())?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Render the template with a HashMap of field values.

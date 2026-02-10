@@ -226,7 +226,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
         .only_routable(args.only_routable)
         .build()?;
 
-    let mut out = StandardStream::stdout(colormode);
+    let mut out = io::BufWriter::with_capacity(65536, StandardStream::stdout(colormode));
 
     // Handle file-based tagging mode
     if args.tag_files {
@@ -263,12 +263,23 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                         out.write_all(cached.as_bytes())?;
                         out.write_all(b"\n")?;
                     } else {
-                        // Only perform UTF-8 validation on cache miss
+                        // Only perform UTF-8 validation and parsing on cache miss
                         let ipstr = std::str::from_utf8(ip_bytes).unwrap_or("decode error");
-                        let result = geoipdb.lookup(ipstr);
-                        out.write_all(result.as_bytes())?;
-                        out.write_all(b"\n")?;
-                        cache.insert(ip_bytes.to_vec(), result);
+                        if let Ok(ip) = ipstr.parse::<std::net::IpAddr>() {
+                            // Use streaming lookup for the immediate output
+                            geoipdb.lookup_and_write(&mut out, ip, ipstr)?;
+                            out.write_all(b"\n")?;
+                            
+                            // Still perform a normal lookup to populate the cache for future hits
+                            // (Only if the cache is still at a reasonable size)
+                            if cache.len() < 100000 {
+                                let result = geoipdb.lookup(ip, ipstr);
+                                cache.insert(ip_bytes.to_vec(), result);
+                            }
+                        } else {
+                            out.write_all(ipstr.as_bytes())?;
+                            out.write_all(b"\n")?;
+                        }
                     }
                 }
                 reader.consume(len);
@@ -302,11 +313,15 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                         if let Some(cached) = cache.get(ip_bytes) {
                             out.write_all(cached.as_bytes())?;
                         } else {
-                            // Only perform UTF-8 validation on cache miss
+                            // Only perform UTF-8 validation and parsing on cache miss
                             let ipstr = std::str::from_utf8(ip_bytes).unwrap_or("decode error");
-                            let result = geoipdb.lookup(ipstr);
-                            out.write_all(result.as_bytes())?;
-                            cache.insert(ip_bytes.to_vec(), result);
+                            if let Ok(ip) = ipstr.parse::<std::net::IpAddr>() {
+                                let result = geoipdb.lookup(ip, ipstr);
+                                out.write_all(result.as_bytes())?;
+                                cache.insert(ip_bytes.to_vec(), result);
+                            } else {
+                                out.write_all(ipstr.as_bytes())?;
+                            }
                         }
                         last_pos = range.end;
                     }
