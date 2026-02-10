@@ -3,6 +3,7 @@ use camino::Utf8PathBuf;
 use maxminddb::Reader;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::io::Write;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
@@ -103,7 +104,12 @@ pub trait MmdbProvider: fmt::Debug {
     fn initialize(&mut self, path: &Path) -> Result<()>;
 
     /// Lookup data for an IP address and format it according to the template
-    fn lookup(&self, ip: IpAddr, ip_str: &str, template: &crate::template::Template) -> Result<String>;
+    fn lookup(
+        &self,
+        ip: IpAddr,
+        ip_str: &str,
+        template: &crate::template::Template,
+    ) -> Result<String>;
 
     /// Lookup data for an IP address and write it directly to a writer
     fn lookup_and_write(
@@ -248,9 +254,10 @@ impl MmdbProvider for MaxMindProvider {
 
         let city_path = path.join("GeoLite2-City.mmdb");
         if city_path.exists() {
-            self.city_reader = Some(unsafe { Reader::open_mmap(&city_path) }.with_context(|| {
-                format!("Failed to open City database at {}", city_path.display())
-            })?);
+            self.city_reader =
+                Some(unsafe { Reader::open_mmap(&city_path) }.with_context(|| {
+                    format!("Failed to open City database at {}", city_path.display())
+                })?);
         }
 
         // Try to open separate IPv4/IPv6 databases if main ones aren't available
@@ -259,23 +266,25 @@ impl MmdbProvider for MaxMindProvider {
             let ipv6_asn_path = path.join("GeoLite2-ASN-IPv6.mmdb");
 
             if ipv4_asn_path.exists() {
-                self.ipv4_reader =
-                    Some(unsafe { Reader::open_mmap(&ipv4_asn_path) }.with_context(|| {
+                self.ipv4_reader = Some(
+                    unsafe { Reader::open_mmap(&ipv4_asn_path) }.with_context(|| {
                         format!(
                             "Failed to open IPv4 ASN database at {}",
                             ipv4_asn_path.display()
                         )
-                    })?);
+                    })?,
+                );
             }
 
             if ipv6_asn_path.exists() {
-                self.ipv6_reader =
-                    Some(unsafe { Reader::open_mmap(&ipv6_asn_path) }.with_context(|| {
+                self.ipv6_reader = Some(
+                    unsafe { Reader::open_mmap(&ipv6_asn_path) }.with_context(|| {
                         format!(
                             "Failed to open IPv6 ASN database at {}",
                             ipv6_asn_path.display()
                         )
-                    })?);
+                    })?,
+                );
             }
         }
 
@@ -284,23 +293,25 @@ impl MmdbProvider for MaxMindProvider {
             let ipv6_city_path = path.join("GeoLite2-City-IPv6.mmdb");
 
             if ipv4_city_path.exists() {
-                self.ipv4_reader =
-                    Some(unsafe { Reader::open_mmap(&ipv4_city_path) }.with_context(|| {
+                self.ipv4_reader = Some(
+                    unsafe { Reader::open_mmap(&ipv4_city_path) }.with_context(|| {
                         format!(
                             "Failed to open IPv4 City database at {}",
                             ipv4_city_path.display()
                         )
-                    })?);
+                    })?,
+                );
             }
 
             if ipv6_city_path.exists() {
-                self.ipv6_reader =
-                    Some(unsafe { Reader::open_mmap(&ipv6_city_path) }.with_context(|| {
+                self.ipv6_reader = Some(
+                    unsafe { Reader::open_mmap(&ipv6_city_path) }.with_context(|| {
                         format!(
                             "Failed to open IPv6 City database at {}",
                             ipv6_city_path.display()
                         )
-                    })?);
+                    })?,
+                );
             }
         }
 
@@ -318,7 +329,12 @@ impl MmdbProvider for MaxMindProvider {
         Ok(())
     }
 
-    fn lookup(&self, ip: IpAddr, ip_str: &str, template: &crate::template::Template) -> Result<String> {
+    fn lookup(
+        &self,
+        ip: IpAddr,
+        ip_str: &str,
+        template: &crate::template::Template,
+    ) -> Result<String> {
         if !self.initialized {
             anyhow::bail!("Provider not initialized");
         }
@@ -332,10 +348,12 @@ impl MmdbProvider for MaxMindProvider {
                 Ok(lookup) => lookup.decode::<FastAsn>().ok().flatten(),
                 Err(_) => None,
             };
-        } else if (is_ipv4 && self.ipv4_reader.is_some())
-            || (!is_ipv4 && self.ipv6_reader.is_some())
-        {
-            let reader = if is_ipv4 { &self.ipv4_reader } else { &self.ipv6_reader };
+        } else {
+            let reader = if is_ipv4 {
+                &self.ipv4_reader
+            } else {
+                &self.ipv6_reader
+            };
             if let Some(ref reader) = reader {
                 asn_record = match reader.lookup(ip) {
                     Ok(lookup) => lookup.decode::<FastAsn>().ok().flatten(),
@@ -353,29 +371,80 @@ impl MmdbProvider for MaxMindProvider {
             };
         }
 
-        // Pre-compute string values for numeric fields
-        let asn_num = asn_record.as_ref().and_then(|r| r.autonomous_system_number).unwrap_or(0);
-        let asn_num_str = if asn_num == 0 { "0".to_string() } else { asn_num.to_string() };
+        // Use a vector to render the template avoiding lifetime issues with internal buffers
+        let mut buf = Vec::with_capacity(64);
+        let mut asn_num_buf = itoa::Buffer::new();
+        let mut lat_buf = ryu::Buffer::new();
+        let mut lon_buf = ryu::Buffer::new();
 
-        let lat_val = city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.latitude).unwrap_or(0.0);
-        let lon_val = city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.longitude).unwrap_or(0.0);
-        let latitude_str = if lat_val == 0.0 { "0.0".to_string() } else { lat_val.to_string() };
-        let longitude_str = if lon_val == 0.0 { "0.0".to_string() } else { lon_val.to_string() };
+        template.write(&mut buf, |wtr, field| {
+            let val = match field {
+                "ip" => ip_str,
+                "asnnum" => {
+                    let asn_num = asn_record
+                        .as_ref()
+                        .and_then(|r| r.autonomous_system_number)
+                        .unwrap_or(0);
+                    asn_num_buf.format(asn_num)
+                }
+                "asnorg" => asn_record
+                    .as_ref()
+                    .and_then(|r| r.autonomous_system_organization.as_deref())
+                    .unwrap_or(""),
+                "city" => city_record
+                    .as_ref()
+                    .and_then(|r| r.city.as_ref())
+                    .and_then(|c| c.names.as_ref())
+                    .and_then(|n| n.en.as_deref())
+                    .unwrap_or(""),
+                "continent" => city_record
+                    .as_ref()
+                    .and_then(|r| r.continent.as_ref())
+                    .and_then(|c| c.code.as_deref())
+                    .unwrap_or(""),
+                "country_iso" => city_record
+                    .as_ref()
+                    .and_then(|r| r.country.as_ref())
+                    .and_then(|c| c.iso_code.as_deref())
+                    .unwrap_or(""),
+                "country_full" => city_record
+                    .as_ref()
+                    .and_then(|r| r.country.as_ref())
+                    .and_then(|c| c.names.as_ref())
+                    .and_then(|n| n.en.as_deref())
+                    .unwrap_or(""),
+                "latitude" => {
+                    let val = city_record
+                        .as_ref()
+                        .and_then(|r| r.location.as_ref())
+                        .and_then(|l| l.latitude)
+                        .unwrap_or(0.0);
+                    lat_buf.format(val)
+                }
+                "longitude" => {
+                    let val = city_record
+                        .as_ref()
+                        .and_then(|r| r.location.as_ref())
+                        .and_then(|l| l.longitude)
+                        .unwrap_or(0.0);
+                    lon_buf.format(val)
+                }
+                "timezone" => city_record
+                    .as_ref()
+                    .and_then(|r| r.location.as_ref())
+                    .and_then(|l| l.time_zone.as_deref())
+                    .unwrap_or(""),
+                _ => "",
+            };
 
-        let result = template.render(|field| match field {
-            "ip" => ip_str,
-            "asnnum" => &asn_num_str,
-            "asnorg" => asn_record.as_ref().and_then(|r| r.autonomous_system_organization.as_deref()).unwrap_or(""),
-            "city" => city_record.as_ref().and_then(|r| r.city.as_ref()).and_then(|c| c.names.as_ref()).and_then(|n| n.en.as_deref()).unwrap_or(""),
-            "continent" => city_record.as_ref().and_then(|r| r.continent.as_ref()).and_then(|c| c.code.as_deref()).unwrap_or(""),
-            "country_iso" => city_record.as_ref().and_then(|r| r.country.as_ref()).and_then(|c| c.iso_code.as_deref()).unwrap_or(""),
-            "country_full" => city_record.as_ref().and_then(|r| r.country.as_ref()).and_then(|c| c.names.as_ref()).and_then(|n| n.en.as_deref()).unwrap_or(""),
-            "latitude" => &latitude_str,
-            "longitude" => &longitude_str,
-            "timezone" => city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.time_zone.as_deref()).unwrap_or(""),
-            _ => "",
-        });
+            if val.contains(' ') {
+                wtr.write_all(val.replace(' ', "_").as_bytes())
+            } else {
+                wtr.write_all(val.as_bytes())
+            }
+        })?;
 
+        let result = String::from_utf8(buf).unwrap_or_default();
         Ok(result.replace(' ', "_"))
     }
 
@@ -399,7 +468,11 @@ impl MmdbProvider for MaxMindProvider {
                 Err(_) => None,
             };
         } else {
-            let reader = if is_ipv4 { &self.ipv4_reader } else { &self.ipv6_reader };
+            let reader = if is_ipv4 {
+                &self.ipv4_reader
+            } else {
+                &self.ipv6_reader
+            };
             if let Some(ref reader) = reader {
                 asn_record = match reader.lookup(ip) {
                     Ok(lookup) => lookup.decode::<FastAsn>().ok().flatten(),
@@ -416,25 +489,75 @@ impl MmdbProvider for MaxMindProvider {
             };
         }
 
-        let asn_num = asn_record.as_ref().and_then(|r| r.autonomous_system_number).unwrap_or(0);
-        let asn_num_str = if asn_num == 0 { "0".to_string() } else { asn_num.to_string() };
-        let lat_val = city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.latitude).unwrap_or(0.0);
-        let lon_val = city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.longitude).unwrap_or(0.0);
-        let latitude_str = if lat_val == 0.0 { "0.0".to_string() } else { lat_val.to_string() };
-        let longitude_str = if lon_val == 0.0 { "0.0".to_string() } else { lon_val.to_string() };
+        let mut asn_num_buf = itoa::Buffer::new();
+        let mut lat_buf = ryu::Buffer::new();
+        let mut lon_buf = ryu::Buffer::new();
 
-        template.write(wtr, |field| match field {
-            "ip" => ip_str,
-            "asnnum" => &asn_num_str,
-            "asnorg" => asn_record.as_ref().and_then(|r| r.autonomous_system_organization.as_deref()).unwrap_or(""),
-            "city" => city_record.as_ref().and_then(|r| r.city.as_ref()).and_then(|c| c.names.as_ref()).and_then(|n| n.en.as_deref()).unwrap_or(""),
-            "continent" => city_record.as_ref().and_then(|r| r.continent.as_ref()).and_then(|c| c.code.as_deref()).unwrap_or(""),
-            "country_iso" => city_record.as_ref().and_then(|r| r.country.as_ref()).and_then(|c| c.iso_code.as_deref()).unwrap_or(""),
-            "country_full" => city_record.as_ref().and_then(|r| r.country.as_ref()).and_then(|c| c.names.as_ref()).and_then(|n| n.en.as_deref()).unwrap_or(""),
-            "latitude" => &latitude_str,
-            "longitude" => &longitude_str,
-            "timezone" => city_record.as_ref().and_then(|r| r.location.as_ref()).and_then(|l| l.time_zone.as_deref()).unwrap_or(""),
-            _ => "",
+        template.write(wtr, |out, field| {
+            let val = match field {
+                "ip" => ip_str,
+                "asnnum" => {
+                    let asn_num = asn_record
+                        .as_ref()
+                        .and_then(|r| r.autonomous_system_number)
+                        .unwrap_or(0);
+                    asn_num_buf.format(asn_num)
+                }
+                "asnorg" => asn_record
+                    .as_ref()
+                    .and_then(|r| r.autonomous_system_organization.as_deref())
+                    .unwrap_or(""),
+                "city" => city_record
+                    .as_ref()
+                    .and_then(|r| r.city.as_ref())
+                    .and_then(|c| c.names.as_ref())
+                    .and_then(|n| n.en.as_deref())
+                    .unwrap_or(""),
+                "continent" => city_record
+                    .as_ref()
+                    .and_then(|r| r.continent.as_ref())
+                    .and_then(|c| c.code.as_deref())
+                    .unwrap_or(""),
+                "country_iso" => city_record
+                    .as_ref()
+                    .and_then(|r| r.country.as_ref())
+                    .and_then(|c| c.iso_code.as_deref())
+                    .unwrap_or(""),
+                "country_full" => city_record
+                    .as_ref()
+                    .and_then(|r| r.country.as_ref())
+                    .and_then(|c| c.names.as_ref())
+                    .and_then(|n| n.en.as_deref())
+                    .unwrap_or(""),
+                "latitude" => {
+                    let val = city_record
+                        .as_ref()
+                        .and_then(|r| r.location.as_ref())
+                        .and_then(|l| l.latitude)
+                        .unwrap_or(0.0);
+                    lat_buf.format(val)
+                }
+                "longitude" => {
+                    let val = city_record
+                        .as_ref()
+                        .and_then(|r| r.location.as_ref())
+                        .and_then(|l| l.longitude)
+                        .unwrap_or(0.0);
+                    lon_buf.format(val)
+                }
+                "timezone" => city_record
+                    .as_ref()
+                    .and_then(|r| r.location.as_ref())
+                    .and_then(|l| l.time_zone.as_deref())
+                    .unwrap_or(""),
+                _ => "",
+            };
+
+            if val.contains(' ') {
+                out.write_all(val.replace(' ', "_").as_bytes())
+            } else {
+                out.write_all(val.as_bytes())
+            }
         })?;
 
         Ok(())
@@ -576,7 +699,12 @@ impl ProviderRegistry {
     }
 
     /// Lookup data for an IP address using the active provider
-    pub fn lookup(&self, ip: IpAddr, ip_str: &str, template: &crate::template::Template) -> Result<String> {
+    pub fn lookup(
+        &self,
+        ip: IpAddr,
+        ip_str: &str,
+        template: &crate::template::Template,
+    ) -> Result<String> {
         self.get_active_provider()?.lookup(ip, ip_str, template)
     }
 

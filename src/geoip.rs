@@ -106,7 +106,11 @@ impl GeoIPSed {
             return Ok(());
         }
 
-        if self.provider.lookup_and_write(wtr, ip, s, &self.template).is_err() {
+        if self
+            .provider
+            .lookup_and_write(wtr, ip, s, &self.template)
+            .is_err()
+        {
             wtr.write_all(s.as_bytes())?;
         }
 

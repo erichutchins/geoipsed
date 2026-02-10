@@ -1,9 +1,12 @@
 use anyhow::{Error, Result};
-use bstr::io::BufReadExt;
 use camino::Utf8PathBuf;
 use clap::{Parser, ValueEnum};
+use ripline::{
+    line_buffer::{LineBufferBuilder, LineBufferReader},
+    lines::LineIter,
+};
 use rustc_hash::FxHashMap as HashMap;
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 use termcolor::{ColorChoice, StandardStream};
 
@@ -241,59 +244,45 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
         HashMap::with_capacity_and_hasher(4096, Default::default());
     let only_matching = args.only_matching;
     let tag_mode = args.tag;
+    let mut line_buffer = LineBufferBuilder::new().capacity(65536).build();
 
     for path in args.input {
-        let input = FileOrStdin::from_path(path);
-        let mut reader = input.reader()?;
+        let file = FileOrStdin::from_path(path);
+        let reader = file.reader()?;
+        let mut lb_reader = LineBufferReader::new(reader, &mut line_buffer);
 
-        // In only_matching mode, skip line iteration entirely and run regex
-        // directly over the reader's buffer.
-        if only_matching {
-            loop {
-                let buf = reader.fill_buf()?;
-                if buf.is_empty() {
-                    break;
-                }
-                let len = buf.len();
+        while lb_reader.fill()? {
+            let buffer = lb_reader.buffer();
+            let lines = LineIter::new(b'\n', buffer);
 
-                for range in extractor.find_iter(buf) {
-                    let ip_bytes = &buf[range.clone()];
+            for line in lines {
+                if only_matching {
+                    for range in extractor.find_iter(line) {
+                        let ip_bytes = &line[range.clone()];
 
-                    if let Some(cached) = cache.get(ip_bytes) {
-                        out.write_all(cached.as_bytes())?;
-                        out.write_all(b"\n")?;
-                    } else {
-                        // Only perform UTF-8 validation and parsing on cache miss
-                        let ipstr = std::str::from_utf8(ip_bytes).unwrap_or("decode error");
-                        if let Ok(ip) = ipstr.parse::<std::net::IpAddr>() {
-                            // Use streaming lookup for the immediate output
-                            geoipdb.lookup_and_write(&mut out, ip, ipstr)?;
+                        if let Some(cached) = cache.get(ip_bytes) {
+                            out.write_all(cached.as_bytes())?;
                             out.write_all(b"\n")?;
-                            
-                            // Still perform a normal lookup to populate the cache for future hits
-                            // (Only if the cache is still at a reasonable size)
-                            if cache.len() < 100000 {
-                                let result = geoipdb.lookup(ip, ipstr);
-                                cache.insert(ip_bytes.to_vec(), result);
-                            }
                         } else {
-                            out.write_all(ipstr.as_bytes())?;
-                            out.write_all(b"\n")?;
+                            let ipstr = std::str::from_utf8(ip_bytes).unwrap_or("decode error");
+                            if let Ok(ip) = ipstr.parse::<std::net::IpAddr>() {
+                                let result = geoipdb.lookup(ip, ipstr);
+                                out.write_all(result.as_bytes())?;
+                                out.write_all(b"\n")?;
+                                if cache.len() < 100000 {
+                                    cache.insert(ip_bytes.to_vec(), result);
+                                }
+                            } else {
+                                out.write_all(ipstr.as_bytes())?;
+                                out.write_all(b"\n")?;
+                            }
                         }
                     }
-                }
-                reader.consume(len);
-            }
-        } else {
-            // Process line-by-line for normal and tag modes
-            reader.for_byte_line_with_terminator(|line| {
-                if tag_mode {
+                } else if tag_mode {
                     let mut tagged = Tagged::new(line);
-
                     for range in extractor.find_iter(line) {
                         let ipstr =
                             std::str::from_utf8(&line[range.clone()]).unwrap_or("decode error");
-                        // In tag mode, we don't decorate, just tag.
                         tagged = tagged.tag(
                             Tag::new(ipstr.to_owned())
                                 .with_range(range)
@@ -302,35 +291,31 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                     }
                     tagged.write_json(&mut out)?;
                 } else {
-                    // Fast path: Stream directly to avoid allocations for Tagged/Tag structs
                     let mut last_pos = 0;
                     for range in extractor.find_iter(line) {
-                        // Write text before the match
                         out.write_all(&line[last_pos..range.start])?;
-
                         let ip_bytes = &line[range.clone()];
 
                         if let Some(cached) = cache.get(ip_bytes) {
                             out.write_all(cached.as_bytes())?;
                         } else {
-                            // Only perform UTF-8 validation and parsing on cache miss
                             let ipstr = std::str::from_utf8(ip_bytes).unwrap_or("decode error");
                             if let Ok(ip) = ipstr.parse::<std::net::IpAddr>() {
                                 let result = geoipdb.lookup(ip, ipstr);
                                 out.write_all(result.as_bytes())?;
-                                cache.insert(ip_bytes.to_vec(), result);
+                                if cache.len() < 100000 {
+                                    cache.insert(ip_bytes.to_vec(), result);
+                                }
                             } else {
                                 out.write_all(ipstr.as_bytes())?;
                             }
                         }
                         last_pos = range.end;
                     }
-                    // Write remaining text
                     out.write_all(&line[last_pos..])?;
                 }
-
-                Ok(true)
-            })?;
+            }
+            lb_reader.consume_all();
         }
         out.flush()?;
     }

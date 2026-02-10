@@ -119,22 +119,20 @@ impl Template {
     }
 
     /// Renders the template and writes it to the writer.
+    ///
+    /// The closure receives the writer and a field name, and should write
+    /// the corresponding value to the writer.
     #[inline]
-    pub fn write<'a, W: std::io::Write + ?Sized>(
-        &self,
-        wtr: &mut W,
-        mut lookup: impl FnMut(&str) -> &'a str,
-    ) -> std::io::Result<()> {
+    pub fn write<W, L>(&self, wtr: &mut W, mut lookup: L) -> std::io::Result<()>
+    where
+        W: std::io::Write + ?Sized,
+        L: FnMut(&mut W, &str) -> std::io::Result<()>,
+    {
         for part in &self.parts {
             match part {
                 TemplatePart::Literal(s) => wtr.write_all(s.as_bytes())?,
                 TemplatePart::Field(f) => {
-                    let val = lookup(f);
-                    if val.contains(' ') {
-                        wtr.write_all(val.replace(' ', "_").as_bytes())?;
-                    } else {
-                        wtr.write_all(val.as_bytes())?;
-                    }
+                    lookup(wtr, f)?;
                 }
             }
         }

@@ -64,7 +64,8 @@ fn test_basic_ipv4_lookup() {
     let geoipsed = create_test_geoipsed();
     let test_ip = "67.43.156.1";
 
-    let result = geoipsed.lookup(test_ip);
+    let ip = test_ip.parse().unwrap();
+    let result = geoipsed.lookup(ip, test_ip);
     assert_eq!(result, "<67.43.156.1|AS35908_|BT|>");
 }
 
@@ -75,7 +76,8 @@ fn test_basic_ipv6_lookup() {
     let geoipsed = create_test_geoipsed();
     let test_ip = "240b::beef:0:24";
 
-    let result = geoipsed.lookup(test_ip);
+    let ip = test_ip.parse().unwrap();
+    let result = geoipsed.lookup(ip, test_ip);
     assert_eq!(result, "<240b::beef:0:24|AS2516_KDDI_KDDI_CORPORATION||>");
 }
 
@@ -101,8 +103,9 @@ fn test_template_customization() {
 
     let test_ip = "81.2.69.205";
 
+    let ip = test_ip.parse().unwrap();
     // For the timezone template in tests, we should get the special format
-    let result = geoipsed.lookup(test_ip);
+    let result = geoipsed.lookup(ip, test_ip);
 
     // Test response direct matching
     if result != "testing_81.2.69.205@Europe/London" {
@@ -132,7 +135,8 @@ fn test_tagged_text() {
     // Find IP and add tag
     for range in extractor.find_iter(bytes) {
         let ip_str = std::str::from_utf8(&bytes[range.clone()]).unwrap();
-        let decorated = geoipsed.lookup(ip_str);
+        let ip = ip_str.parse().unwrap();
+        let decorated = geoipsed.lookup(ip, ip_str);
 
         tagged = tagged.tag(
             Tag::new(ip_str)
@@ -167,7 +171,8 @@ fn test_multiple_ips() {
     // Find IP and add tag
     for range in extractor.find_iter(bytes) {
         let ip_str = std::str::from_utf8(&bytes[range.clone()]).unwrap();
-        let decorated = geoipsed.lookup(ip_str);
+        let ip = ip_str.parse().unwrap();
+        let decorated = geoipsed.lookup(ip, ip_str);
 
         tagged = tagged.tag(
             Tag::new(ip_str)
