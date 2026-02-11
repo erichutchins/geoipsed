@@ -3,6 +3,21 @@
 //! This crate provides the `Extractor` for finding IPv4 and IPv6 addresses in raw bytes,
 //! and the `Tagged` system for generating decorated output or JSON metadata.
 //!
+//! # Performance Architecture
+//!
+//! This crate uses `regex-automata` with HIR (High-level Intermediate Representation) for
+//! optimal performance:
+//!
+//! - **Pre-compiled patterns**: Regex patterns are compiled once via `OnceLock` and reused
+//!   across all extractor instances, eliminating runtime compilation overhead.
+//! - **HIR compilation**: Patterns are parsed into HIR first, then compiled to automata.
+//!   This allows inspection and manipulation of regex structure before compilation.
+//! - **Multi-pattern matching**: The combined IPv4+IPv6 regex uses `build_many_from_hir`,
+//!   which enables simultaneous matching of multiple patterns in a single pass with pattern
+//!   ID tracking for efficient validation routing.
+//! - **Cheap cloning**: `regex-automata::meta::Regex` clones share read-only automata data,
+//!   making it efficient to create per-thread extractors without memory overhead.
+//!
 //! # Examples
 //!
 //! ```
@@ -23,12 +38,102 @@ use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Range;
 use std::str;
+use std::sync::OnceLock;
 
 use regex_automata::meta::Regex;
-use regex_syntax::hir::Hir;
 
 mod tag;
 pub use tag::{Tag, Tagged, TextData};
+
+// IP pattern strings
+static IPV4_PATTERN: &str =
+    r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)";
+static IPV6_PATTERN: &str = r"(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,4}:[^\s:](?:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]).){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))|(?:::(?:ffff(?::0{1,4}){0,1}:){0,1}[^\s:](?:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]).){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))|(?:fe80:(?::(?:(?:[0-9a-fA-F]){1,4})){0,4}%[0-9a-zA-Z]{1,})|(?::(?:(?::(?:(?:[0-9a-fA-F]){1,4})){1,7}|:))|(?:(?:(?:[0-9a-fA-F]){1,4}):(?:(?::(?:(?:[0-9a-fA-F]){1,4})){1,6}))|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,2}(?::(?:(?:[0-9a-fA-F]){1,4})){1,5})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,3}(?::(?:(?:[0-9a-fA-F]){1,4})){1,4})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,4}(?::(?:(?:[0-9a-fA-F]){1,4})){1,3})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,5}(?::(?:(?:[0-9a-fA-F]){1,4})){1,2})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,6}:(?:(?:[0-9a-fA-F]){1,4}))|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,7}:)|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){7,7}(?:(?:[0-9a-fA-F]){1,4}))";
+
+// Pre-compiled regex variants (lazy-initialized once on first use)
+static REGEX_IPV4_ONLY: OnceLock<Regex> = OnceLock::new();
+static REGEX_IPV6_ONLY: OnceLock<Regex> = OnceLock::new();
+static REGEX_BOTH: OnceLock<Regex> = OnceLock::new();
+
+/// Get the pre-compiled IPv4-only regex pattern.
+///
+/// This function uses `OnceLock` to lazily compile the IPv4 pattern on first use.
+/// The pattern is parsed into HIR (High-level Intermediate Representation) before
+/// compilation, which provides:
+///
+/// - **Structural manipulation**: HIR can be inspected and modified before compilation
+/// - **Optimization opportunities**: The compiler can apply HIR-level optimizations
+/// - **Multi-pattern support**: HIR enables efficient combined pattern matching
+///
+/// The compiled regex uses `auto_prefilter(true)` to enable fast literal scanning
+/// and `LeftmostFirst` matching semantics for consistent extraction behavior.
+fn get_ipv4_regex() -> &'static Regex {
+    REGEX_IPV4_ONLY.get_or_init(|| {
+        let ipv4_hir = regex_syntax::Parser::new()
+            .parse(IPV4_PATTERN)
+            .expect("IPv4 pattern should be valid");
+
+        Regex::builder()
+            .configure(
+                Regex::config()
+                    .auto_prefilter(true)
+                    .match_kind(regex_automata::MatchKind::LeftmostFirst),
+            )
+            .build_from_hir(&ipv4_hir)
+            .expect("IPv4 regex should compile")
+    })
+}
+
+/// Get the pre-compiled IPv6-only regex pattern.
+fn get_ipv6_regex() -> &'static Regex {
+    REGEX_IPV6_ONLY.get_or_init(|| {
+        let ipv6_hir = regex_syntax::Parser::new()
+            .parse(IPV6_PATTERN)
+            .expect("IPv6 pattern should be valid");
+
+        Regex::builder()
+            .configure(
+                Regex::config()
+                    .auto_prefilter(true)
+                    .match_kind(regex_automata::MatchKind::LeftmostFirst),
+            )
+            .build_from_hir(&ipv6_hir)
+            .expect("IPv6 regex should compile")
+    })
+}
+
+/// Get the pre-compiled combined IPv4+IPv6 regex pattern.
+///
+/// This function compiles both IPv4 and IPv6 patterns into a single multi-pattern regex
+/// using `build_many_from_hir`. The HIR-based approach is essential here because:
+///
+/// - **Pattern ID tracking**: Each match includes a pattern ID (0=IPv4, 1=IPv6) that
+///   routes to the correct validator without string inspection.
+/// - **Single-pass matching**: Both patterns are matched simultaneously in one automaton
+///   traversal, rather than running two separate regex engines.
+/// - **Shared prefix optimization**: The automaton can share common states between patterns
+///   for more efficient matching.
+///
+/// This is significantly more efficient than alternation (`ipv4|ipv6`) or sequential matching.
+fn get_both_regex() -> &'static Regex {
+    REGEX_BOTH.get_or_init(|| {
+        let ipv4_hir = regex_syntax::Parser::new()
+            .parse(IPV4_PATTERN)
+            .expect("IPv4 pattern should be valid");
+        let ipv6_hir = regex_syntax::Parser::new()
+            .parse(IPV6_PATTERN)
+            .expect("IPv6 pattern should be valid");
+
+        Regex::builder()
+            .configure(
+                Regex::config()
+                    .auto_prefilter(true)
+                    .match_kind(regex_automata::MatchKind::LeftmostFirst),
+            )
+            .build_many_from_hir(&[Cow::Borrowed(&ipv4_hir), Cow::Borrowed(&ipv6_hir)])
+            .expect("Combined regex should compile")
+    })
+}
 
 /// Internal validator types for different IP versions.
 #[derive(Clone, Debug)]
@@ -196,59 +301,47 @@ impl ExtractorBuilder {
 
     /// Consumes the builder and returns a compiled `Extractor`.
     ///
-    /// This will compile the underlying regex engine. Returns an error if:
+    /// This uses pre-compiled regex patterns for optimal performance. Returns an error if:
     /// - No IP versions are enabled.
-    /// - The internal regex patterns fail to compile.
     pub fn build(&self) -> anyhow::Result<Extractor> {
-        // Pre-allocate vectors with known capacity for better performance
-        let pattern_count = self.include_ipv4 as usize + self.include_ipv6 as usize;
-        let mut patterns: Vec<Cow<'_, Hir>> = Vec::with_capacity(pattern_count);
-        let mut validators: Vec<ValidatorType> = Vec::with_capacity(pattern_count);
-
-        // Add IPv4 pattern if included
-        if self.include_ipv4 {
-            // Use a more efficient IPv4 pattern
-            static IPV4_PATTERN: &str = r"(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)";
-
-            let ipv4_hir: Hir = regex_syntax::Parser::new().parse(IPV4_PATTERN)?;
-
-            patterns.push(Cow::Owned(ipv4_hir));
-            validators.push(ValidatorType::IPv4 {
-                include_private: self.include_private,
-                include_loopback: self.include_loopback,
-                include_broadcast: self.include_broadcast,
-                only_routable: self.only_routable,
-            });
-        }
-
-        // Add IPv6 pattern if included
-        if self.include_ipv6 {
-            // IPv6 address pattern
-            static IPV6_PATTERN: &str = r"(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,4}:[^\s:](?:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]).){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))|(?:::(?:ffff(?::0{1,4}){0,1}:){0,1}[^\s:](?:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9]).){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))|(?:fe80:(?::(?:(?:[0-9a-fA-F]){1,4})){0,4}%[0-9a-zA-Z]{1,})|(?::(?:(?::(?:(?:[0-9a-fA-F]){1,4})){1,7}|:))|(?:(?:(?:[0-9a-fA-F]){1,4}):(?:(?::(?:(?:[0-9a-fA-F]){1,4})){1,6}))|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,2}(?::(?:(?:[0-9a-fA-F]){1,4})){1,5})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,3}(?::(?:(?:[0-9a-fA-F]){1,4})){1,4})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,4}(?::(?:(?:[0-9a-fA-F]){1,4})){1,3})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,5}(?::(?:(?:[0-9a-fA-F]){1,4})){1,2})|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,6}:(?:(?:[0-9a-fA-F]){1,4}))|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){1,7}:)|(?:(?:(?:(?:[0-9a-fA-F]){1,4}):){7,7}(?:(?:[0-9a-fA-F]){1,4}))";
-
-            let ipv6_hir: Hir = regex_syntax::Parser::new().parse(IPV6_PATTERN)?;
-
-            patterns.push(Cow::Owned(ipv6_hir));
-            validators.push(ValidatorType::IPv6 {
-                include_private: self.include_private,
-                include_loopback: self.include_loopback,
-                only_routable: self.only_routable,
-            });
-        }
-
-        // Fast fail if no patterns selected
-        if patterns.is_empty() {
-            anyhow::bail!("No IP address patterns selected");
-        }
-
-        // Create the regex engine with optimized settings for high performance
-        let regex = Regex::builder()
-            .configure(
-                Regex::config()
-                    .auto_prefilter(true) // Enable prefilter for better performance
-                    .match_kind(regex_automata::MatchKind::LeftmostFirst),
-            ) // Use leftmost-first semantics
-            .build_many_from_hir(&patterns)?;
+        let (regex, validators) = match (self.include_ipv4, self.include_ipv6) {
+            (true, true) => {
+                let validators = vec![
+                    ValidatorType::IPv4 {
+                        include_private: self.include_private,
+                        include_loopback: self.include_loopback,
+                        include_broadcast: self.include_broadcast,
+                        only_routable: self.only_routable,
+                    },
+                    ValidatorType::IPv6 {
+                        include_private: self.include_private,
+                        include_loopback: self.include_loopback,
+                        only_routable: self.only_routable,
+                    },
+                ];
+                (get_both_regex().clone(), validators)
+            }
+            (true, false) => {
+                let validators = vec![ValidatorType::IPv4 {
+                    include_private: self.include_private,
+                    include_loopback: self.include_loopback,
+                    include_broadcast: self.include_broadcast,
+                    only_routable: self.only_routable,
+                }];
+                (get_ipv4_regex().clone(), validators)
+            }
+            (false, true) => {
+                let validators = vec![ValidatorType::IPv6 {
+                    include_private: self.include_private,
+                    include_loopback: self.include_loopback,
+                    only_routable: self.only_routable,
+                }];
+                (get_ipv6_regex().clone(), validators)
+            }
+            (false, false) => {
+                anyhow::bail!("No IP address patterns selected");
+            }
+        };
 
         Ok(Extractor { regex, validators })
     }
