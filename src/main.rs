@@ -53,6 +53,10 @@ struct Args {
     #[clap(long, conflicts_with = "only_matching")]
     tag_files: bool,
 
+    /// Extract IPs only without MMDB lookups or templating (fast path, implies --only-matching)
+    #[clap(short = 'j', long, conflicts_with_all = &["template", "tag", "tag_files", "provider", "include", "list_providers", "list_templates", "only_routable", "only_matching"])]
+    justips: bool,
+
     /// Include all types of IP addresses in matches
     #[clap(long)]
     all: bool,
@@ -206,19 +210,6 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     let include_loopback = args.all || !args.no_loopback;
     let include_broadcast = args.all || !args.no_broadcast;
 
-    // Initialize provider registry
-    let mut provider_registry = mmdb::ProviderRegistry::default();
-    provider_registry.set_active_provider(&args.provider)?;
-    provider_registry.initialize_active_provider(args.include.clone())?;
-
-    let geoipdb = geoip::GeoIPSed::new_with_provider(
-        args.include.clone(),
-        args.template.clone(),
-        colormode,
-        args.only_routable,
-        provider_registry,
-    )?;
-
     // Build the IP extractor with appropriate settings
     // New defaults include all IP types. Use ignore_*() to opt-out or .only_public() for convenience.
     let extractor = if !include_private && !include_loopback && !include_broadcast {
@@ -238,6 +229,24 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
         }
         builder.build()?
     };
+
+    // Fast path: just extract IPs without MMDB lookups
+    if args.justips {
+        return run_justips(args, extractor);
+    }
+
+    // Initialize provider registry (only when needed)
+    let mut provider_registry = mmdb::ProviderRegistry::default();
+    provider_registry.set_active_provider(&args.provider)?;
+    provider_registry.initialize_active_provider(args.include.clone())?;
+
+    let geoipdb = geoip::GeoIPSed::new_with_provider(
+        args.include.clone(),
+        args.template.clone(),
+        colormode,
+        args.only_routable,
+        provider_registry,
+    )?;
 
     let mut out = io::BufWriter::with_capacity(65536, StandardStream::stdout(colormode));
 
@@ -323,6 +332,37 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                         last_pos = range.end;
                     }
                     out.write_all(&line[last_pos..])?;
+                }
+            }
+            lb_reader.consume_all();
+        }
+        out.flush()?;
+    }
+
+    Ok(())
+}
+
+/// Fast path for extracting IPs without MMDB lookups or templating
+/// Always outputs just IPs, one per line
+#[inline(always)]
+fn run_justips(args: Args, extractor: geoipsed::Extractor) -> Result<()> {
+    let mut out = io::BufWriter::with_capacity(65536, io::stdout());
+    let mut line_buffer = LineBufferBuilder::new().capacity(65536).build();
+
+    for path in args.input {
+        let file = FileOrStdin::from_path(path);
+        let reader = file.reader()?;
+        let mut lb_reader = LineBufferReader::new(reader, &mut line_buffer);
+
+        while lb_reader.fill()? {
+            let buffer = lb_reader.buffer();
+            let lines = LineIter::new(b'\n', buffer);
+
+            for line in lines {
+                // Always output just IPs, one per line
+                for range in extractor.find_iter(line) {
+                    out.write_all(&line[range])?;
+                    out.write_all(b"\n")?;
                 }
             }
             lb_reader.consume_all();
