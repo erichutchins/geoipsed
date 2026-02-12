@@ -98,19 +98,57 @@ static DFA_IPV4: OnceLock<&'static DFA<&'static [u32]>> = OnceLock::new();
 static DFA_IPV6: OnceLock<&'static DFA<&'static [u32]>> = OnceLock::new();
 static DFA_BOTH: OnceLock<&'static DFA<&'static [u32]>> = OnceLock::new();
 
+/// Deserialize a pre-compiled DFA from binary bytes with zero-copy semantics.
+///
+/// This function performs a critical performance trick: the DFA is built at compile time
+/// and embedded in the binary as raw bytes. At runtime, we need to:
+///
+/// 1. **Align the bytes**: `regex-automata`'s DFA format requires u32-aligned data for
+///    efficient deserialization. The bytes from `include_bytes!()` are byte-aligned, so
+///    we allocate a u32 buffer and copy the bytes into it.
+///
+/// 2. **Leak for 'static lifetime**: We use `Box::leak()` to convert the heap-allocated
+///    buffer into a `&'static` reference. This is intentional: the DFA lives for the entire
+///    program duration, so the memory is never freed. This enables zero-cost initialization
+///    via `OnceLock` on first use.
+///
+/// 3. **Deserialize in-place**: `DFA::from_bytes()` reconstructs the DFA structure from
+///    the aligned bytes without copying. The resulting DFA holds references into the leaked
+///    buffer.
+///
+/// # Why This Approach?
+///
+/// - **Zero runtime allocation after first call**: Subsequent calls return the cached DFA
+/// - **Zero runtime regex compilation**: The DFA is already built at compile time
+/// - **Minimal binary overhead**: Only one copy of the DFA (serialized) is embedded
+///
+/// # Safety
+///
+/// - `copy_nonoverlapping`: Safe because bytes and storage don't overlap
+/// - `from_raw_parts`: Safe because storage_ref points to valid, initialized data
+/// - `Box::leak`: Safe because DFA is never dropped (program lifetime)
 fn load_dfa(bytes: &'static [u8]) -> &'static DFA<&'static [u32]> {
-    // DFA requires u32-aligned data. We allocate a u32 buffer, copy bytes into it,
-    // then leak it to get 'static lifetime for zero-cost deserialization.
+    // Allocate u32 buffer sized to hold all bytes (rounded up)
     let len = bytes.len();
     let cap = len.div_ceil(4);
     let mut storage = vec![0u32; cap];
+
+    // Copy byte data into the u32-aligned buffer
     unsafe {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), storage.as_mut_ptr() as *mut u8, len);
     }
+
+    // Leak the buffer to get a 'static mutable reference
     let storage_ref: &'static mut [u32] = Box::leak(storage.into_boxed_slice());
+
+    // Reconstruct the byte slice from the u32 buffer (zero-copy)
     let aligned_slice =
         unsafe { std::slice::from_raw_parts(storage_ref.as_ptr() as *const u8, len) };
+
+    // Deserialize the DFA from the aligned bytes
     let (dfa, _) = DFA::from_bytes(aligned_slice).expect("valid dfa from build.rs");
+
+    // Leak the DFA itself for a 'static lifetime
     Box::leak(Box::new(dfa))
 }
 
