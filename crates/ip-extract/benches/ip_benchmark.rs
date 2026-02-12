@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use ip_extract::ExtractorBuilder;
+use ip_extract::{parse_ipv4_bytes, ExtractorBuilder};
 use rand::Rng;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -129,5 +129,51 @@ fn bench_extraction(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_extraction);
+fn bench_ipv4_parser_vs_stdlib(c: &mut Criterion) {
+    let mut group = c.benchmark_group("ipv4_parser");
+
+    // Generate test IPv4 addresses as byte slices
+    let test_ips: Vec<&[u8]> = vec![
+        b"192.168.1.1",
+        b"10.0.0.1",
+        b"8.8.8.8",
+        b"172.16.0.1",
+        b"255.255.255.255",
+        b"0.0.0.0",
+        b"127.0.0.1",
+    ];
+
+    // Benchmark our hand-optimized parser
+    group.bench_function("hand_optimized_parse_ipv4_bytes", |b| {
+        b.iter(|| {
+            for ip_bytes in &test_ips {
+                let _ = parse_ipv4_bytes(ip_bytes);
+            }
+        });
+    });
+
+    // Benchmark stdlib parser (convert to string first, then parse)
+    group.bench_function("stdlib_ipv4addr_parse", |b| {
+        b.iter(|| {
+            for ip_bytes in &test_ips {
+                let ip_str = std::str::from_utf8(ip_bytes).unwrap();
+                let _ = ip_str.parse::<Ipv4Addr>();
+            }
+        });
+    });
+
+    // Benchmark stdlib parser (direct from bytes - allocates String)
+    group.bench_function("stdlib_ipv4addr_parse_with_string_alloc", |b| {
+        b.iter(|| {
+            for ip_bytes in &test_ips {
+                let ip_string = String::from_utf8_lossy(ip_bytes);
+                let _ = ip_string.parse::<Ipv4Addr>();
+            }
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_extraction, bench_ipv4_parser_vs_stdlib);
 criterion_main!(benches);
