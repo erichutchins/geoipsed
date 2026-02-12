@@ -7,7 +7,7 @@ description = "High-performance IP address extraction and tagging engine"
 license = "Unlicense OR MIT"
 repository = "https://github.com/erichutchins/geoipsed"
 homepage = "https://github.com/erichutchins/geoipsed"
-documentation = "https://docs.rs/ip-extractor"
+documentation = "https://docs.rs/ip-extract"
 keywords = ["ip", "extraction", "regex", "tagging", "parser"]
 categories = ["text-processing", "network-programming"]
 

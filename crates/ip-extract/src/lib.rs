@@ -1,4 +1,82 @@
 //! High-performance IP address extraction and tagging engine.
+//!
+//! `ip-extract` provides a blazingly fast, configurable extractor for finding IPv4 and IPv6
+//! addresses in unstructured text. It achieves maximum throughput through:
+//!
+//! - **Compile-time DFA**: IP patterns are converted to dense Forward DFAs during build,
+//!   eliminating runtime regex compilation and heap allocation.
+//! - **Zero-overhead scanning**: The DFA scans at O(n) with no backtracking; validation
+//!   is performed only on candidates.
+//! - **Strict validation**: Deep checks eliminate false positives (e.g., `1.2.3.4.5` is rejected).
+//!
+//! ## Quick Start
+//!
+//! ```no_run
+//! use ip_extract::ExtractorBuilder;
+//!
+//! # fn main() -> anyhow::Result<()> {
+//! let extractor = ExtractorBuilder::new()
+//!     .ipv4(true)
+//!     .ipv6(true)
+//!     .build()?;
+//!
+//! let input = b"Connect from 192.168.1.1 to 2001:db8::1";
+//! for range in extractor.find_iter(input) {
+//!     let ip = std::str::from_utf8(&input[range])?;
+//!     println!("Found: {}", ip);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Tagging and Output
+//!
+//! For more structured output (e.g., JSON), use the `Tagged` and `Tag` types:
+//!
+//! ```no_run
+//! use ip_extract::{ExtractorBuilder, Tagged, Tag};
+//!
+//! # fn main() -> anyhow::Result<()> {
+//! let extractor = ExtractorBuilder::new().build()?;
+//! let data = b"Server at 8.8.8.8";
+//! let mut tagged = Tagged::new(data);
+//!
+//! for range in extractor.find_iter(data) {
+//!     let ip = std::str::from_utf8(&data[range.clone()])?;
+//!     let tag = Tag::new(ip).with_range(range);
+//!     tagged = tagged.tag(tag);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Configuration
+//!
+//! Use `ExtractorBuilder` to customize which IP types are extracted:
+//!
+//! ```no_run
+//! use ip_extract::ExtractorBuilder;
+//!
+//! # fn main() -> anyhow::Result<()> {
+//! let extractor = ExtractorBuilder::new()
+//!     .ipv4(true)           // Extract IPv4
+//!     .ipv6(true)           // Extract IPv6
+//!     .private_ips(false)   // Skip RFC 1918 ranges
+//!     .loopback_ips(false)  // Skip loopback (127.0.0.1, ::1)
+//!     .broadcast_ips(false) // Skip broadcast addresses
+//!     .build()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Performance
+//!
+//! Typical throughput on modern hardware:
+//! - Dense IPs (mostly IP addresses): **160+ MiB/s**
+//! - Sparse logs (IPs mixed with text): **360+ MiB/s**
+//! - No IPs (pure scanning): **620+ MiB/s**
+//!
+//! See `benches/ip_benchmark.rs` for details.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::ops::Range;
@@ -86,12 +164,58 @@ impl ValidatorType {
     }
 }
 
+/// The main IP address extractor.
+///
+/// An `Extractor` scans byte slices for IPv4 and/or IPv6 addresses, applying configurable
+/// filters to include or exclude certain address classes (private, loopback, broadcast).
+///
+/// Extractors are best created via [`ExtractorBuilder`] and are designed to be reused
+/// across many calls to `find_iter` for maximum efficiency.
+///
+/// # Bytes vs. Strings
+///
+/// This extractor works directly on byte slices rather than strings. This avoids UTF-8
+/// validation overhead and enables zero-copy scanning of very large inputs.
+///
+/// # Performance
+///
+/// The extractor uses a compile-time DFA (Deterministic Finite Automaton) for O(n)
+/// scanning with minimal overhead. See the crate-level documentation for throughput benchmarks.
 pub struct Extractor {
     dfa: &'static DFA<&'static [u32]>,
     validators: Vec<ValidatorType>,
 }
 
 impl Extractor {
+    /// Find all IP addresses in a byte slice.
+    ///
+    /// Returns an iterator of byte ranges `[start, end)` pointing to each IP address found.
+    /// Ranges are guaranteed to be valid indices into `haystack`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ip_extract::ExtractorBuilder;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// let extractor = ExtractorBuilder::new().build()?;
+    /// let data = b"Log: 192.168.1.1 sent request to 8.8.8.8";
+    ///
+    /// for range in extractor.find_iter(data) {
+    ///     let ip = std::str::from_utf8(&data[range]).unwrap();
+    ///     println!("IP: {}", ip);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `haystack` - A byte slice to search for IP addresses.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding byte ranges for each valid IP address found.
     #[inline]
     pub fn find_iter<'a>(&'a self, haystack: &'a [u8]) -> impl Iterator<Item = Range<usize>> + 'a {
         let mut input = Input::new(haystack);
@@ -149,6 +273,26 @@ fn is_ip_char(b: u8) -> bool {
     matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'.' | b':' | b'%')
 }
 
+/// A builder for configuring IP extraction behavior.
+///
+/// Use `ExtractorBuilder` to specify which types of IP addresses should be extracted.
+/// By default, it extracts both IPv4 and IPv6 but excludes private, loopback, and
+/// broadcast addresses.
+///
+/// # Example
+///
+/// ```no_run
+/// use ip_extract::ExtractorBuilder;
+///
+/// # fn main() -> anyhow::Result<()> {
+/// let extractor = ExtractorBuilder::new()
+///     .ipv4(true)
+///     .ipv6(false)  // Only IPv4
+///     .private_ips(true)  // Include private ranges
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct ExtractorBuilder {
     include_ipv4: bool,
     include_ipv6: bool,
@@ -165,6 +309,25 @@ impl Default for ExtractorBuilder {
 }
 
 impl ExtractorBuilder {
+    /// Create a new builder with default settings.
+    ///
+    /// Defaults:
+    /// - IPv4: enabled
+    /// - IPv6: enabled
+    /// - Private IPs: disabled (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+    /// - Loopback IPs: disabled (127.0.0.0/8, ::1)
+    /// - Broadcast IPs: disabled (255.255.255.255, link-local)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ip_extract::ExtractorBuilder;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// let extractor = ExtractorBuilder::new().build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new() -> Self {
         Self {
             include_ipv4: true,
@@ -175,31 +338,89 @@ impl ExtractorBuilder {
             only_routable: false,
         }
     }
+    /// Enable or disable IPv4 address extraction.
+    ///
+    /// Default: `true`
     pub fn ipv4(&mut self, include: bool) -> &mut Self {
         self.include_ipv4 = include;
         self
     }
+
+    /// Enable or disable IPv6 address extraction.
+    ///
+    /// Default: `true`
     pub fn ipv6(&mut self, include: bool) -> &mut Self {
         self.include_ipv6 = include;
         self
     }
+
+    /// Include private IP addresses (RFC 1918 for IPv4, ULA for IPv6).
+    ///
+    /// Private ranges include:
+    /// - IPv4: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+    /// - IPv6: fc00::/7 (ULA), fe80::/10 (link-local)
+    ///
+    /// Default: `false`
     pub fn private_ips(&mut self, include: bool) -> &mut Self {
         self.include_private = include;
         self
     }
+
+    /// Include loopback addresses.
+    ///
+    /// Loopback ranges:
+    /// - IPv4: 127.0.0.0/8
+    /// - IPv6: ::1
+    ///
+    /// Default: `false`
     pub fn loopback_ips(&mut self, include: bool) -> &mut Self {
         self.include_loopback = include;
         self
     }
+
+    /// Include broadcast addresses.
+    ///
+    /// Covers:
+    /// - IPv4: 255.255.255.255 and link-local (169.254.0.0/16)
+    /// - IPv6: link-local and other special ranges
+    ///
+    /// Default: `false`
     pub fn broadcast_ips(&mut self, include: bool) -> &mut Self {
         self.include_broadcast = include;
         self
     }
+
+    /// Only extract routable (public) IP addresses.
+    ///
+    /// When enabled, excludes all private, loopback, and broadcast addresses.
+    /// This is a convenience shortcut equivalent to disabling all special ranges.
+    ///
+    /// Default: `false`
     pub fn only_routable(&mut self, only: bool) -> &mut Self {
         self.only_routable = only;
         self
     }
 
+    /// Build and return an `Extractor` with the configured settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no IP version (IPv4 or IPv6) is enabled. At least one
+    /// must be selected.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ip_extract::ExtractorBuilder;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// let extractor = ExtractorBuilder::new()
+    ///     .ipv4(true)
+    ///     .ipv6(true)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn build(&self) -> anyhow::Result<Extractor> {
         let (dfa, validators) = match (self.include_ipv4, self.include_ipv6) {
             (true, true) => (
@@ -265,6 +486,31 @@ fn validate_ipv4(
     true
 }
 
+/// Parse an IPv4 address from a byte slice.
+///
+/// Performs strict validation of dotted-quad notation (e.g., `192.168.1.1`).
+/// Rejects:
+/// - Octet values > 255
+/// - Leading zeros (e.g., `192.168.001.1`)
+/// - Invalid formats
+///
+/// # Arguments
+///
+/// * `bytes` - A byte slice containing a potential IPv4 address (7-15 bytes)
+///
+/// # Returns
+///
+/// `Some(Ipv4Addr)` if the bytes represent a valid IPv4 address, `None` otherwise.
+///
+/// # Example
+///
+/// ```
+/// use ip_extract::parse_ipv4_bytes;
+///
+/// assert_eq!(parse_ipv4_bytes(b"192.168.1.1"), Some("192.168.1.1".parse().unwrap()));
+/// assert_eq!(parse_ipv4_bytes(b"256.1.1.1"), None);  // Out of range
+/// assert_eq!(parse_ipv4_bytes(b"192.168.01.1"), None);  // Leading zero
+/// ```
 #[inline]
 pub fn parse_ipv4_bytes(bytes: &[u8]) -> Option<Ipv4Addr> {
     if bytes.len() < 7 || bytes.len() > 15 {
