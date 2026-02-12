@@ -114,8 +114,8 @@ Use convenience methods to filter:
 
 By design, this engine makes conservative choices for performance:
 
-- **No IPv6 Scope IDs**: Formats like `fe80::1%eth0` not supported (rare in practice)
+- **IPv6 Scope IDs Not Captured**: Formats like `fe80::1%eth0` will extract as `fe80::1` (the scope ID `%eth0` is treated as a boundary and dropped). Zone IDs are rare in practice and typically only appear in command-line tools, not in logs or data.
 - **Strict Boundaries**: IPs must be separated by non-IP characters; concatenated IPs without separators may be skipped
-- **Standard IPv4 Only**: Four-octet dotted notation only (e.g., `192.168.1.1`)
+- **Standard IPv4 Only**: Four-octet dotted notation only (e.g., `192.168.0.1` only, not `0xC0A80001`, not `3232235521`, and not `11000000.10101000.00000000.00000001`)
 
 These constraints ensure zero false positives and maximum scanning performance.

@@ -610,3 +610,34 @@ fn test_json_string_with_multiple_ips() {
     let ranges5: Vec<_> = extractor.find_iter(json5).collect();
     assert_eq!(ranges5.len(), 0);
 }
+
+#[test]
+fn test_ipv6_scope_id_boundary() {
+    // IPv6 scope IDs (zone IDs) are treated as boundaries and not captured
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .build()
+        .unwrap();
+
+    // fe80::1%eth0 should extract as fe80::1 (% acts as boundary)
+    let input1 = b"Link-local: fe80::1%eth0";
+    let ranges1: Vec<_> = extractor.find_iter(input1).collect();
+    assert_eq!(ranges1.len(), 1);
+    assert_eq!(&input1[ranges1[0].clone()], b"fe80::1");
+
+    // Multiple addresses with scope IDs
+    let input2 = b"Interfaces: fe80::1%eth0 fe80::dead:beef%en0 2001:db8::1%tun0";
+    let ranges2: Vec<_> = extractor.find_iter(input2).collect();
+    assert_eq!(ranges2.len(), 3);
+    assert_eq!(&input2[ranges2[0].clone()], b"fe80::1");
+    assert_eq!(&input2[ranges2[1].clone()], b"fe80::dead:beef");
+    assert_eq!(&input2[ranges2[2].clone()], b"2001:db8::1");
+
+    // Scope ID alone (just %) doesn't prevent extraction
+    let input3 = b"fe80::cafe%wlan0 and 10.0.0.1";
+    let ranges3: Vec<_> = extractor.find_iter(input3).collect();
+    assert_eq!(ranges3.len(), 2);
+    assert_eq!(&input3[ranges3[0].clone()], b"fe80::cafe");
+    assert_eq!(&input3[ranges3[1].clone()], b"10.0.0.1");
+}
