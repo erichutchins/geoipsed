@@ -30,11 +30,11 @@ static IPV4_PATTERN: &str = r"(?x)
 /// IPv6 address pattern: matches various IPv6 formats.
 ///
 /// Supports:
-/// - Full form: 2001:db8:85a3:0:0:8a2e:370:7334
-/// - Compressed: 2001:db8::1, ::1, ::
-/// - Link-local with zone: fe80::1%eth0
+/// - Full form: 2001:db8:85a3:0:0:8a2e:370:7334 (39 chars max)
+/// - Compressed: 2001:db8::1, ::1, :: (2 chars min)
 /// - IPv4-mapped: ::ffff:192.0.2.1
 ///
+/// Does NOT support zone IDs (fe80::1%eth0) to keep the implementation simple.
 /// Boundary validation is done in lib.rs.
 static IPV6_PATTERN: &str = r"(?x)
   (?:
@@ -51,9 +51,6 @@ static IPV6_PATTERN: &str = r"(?x)
       (?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}
       (?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])
     )
-  |
-    # Link-local with zone ID (fe80::1%eth0)
-    fe80:(?::(?:(?:[0-9a-fA-F]){1,4})){0,4}%[0-9a-zA-Z]{1,}
   |
     # Compressed form starting with ::
     :(?:(?::(?:(?:[0-9a-fA-F]){1,4})){1,7}|:)
