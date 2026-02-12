@@ -13,15 +13,14 @@ Extract IPv4 and IPv6 addresses from unstructured text with minimal overhead. Th
 
 ### Basic Example
 
+Extract all IP addresses (default behavior):
+
 ```rust
 use ip_extract::ExtractorBuilder;
 
 fn main() -> anyhow::Result<()> {
-    let extractor = ExtractorBuilder::new()
-        .ipv4(true)
-        .ipv6(true)
-        .private_ips(true)
-        .build()?;
+    // Extracts all IPs: IPv4, IPv6, private, loopback, broadcast
+    let extractor = ExtractorBuilder::new().build()?;
 
     let input = b"Connection from 192.168.1.1 and 8.8.8.8";
 
@@ -32,6 +31,31 @@ fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+```
+
+### Configuration Examples
+
+```rust
+use ip_extract::ExtractorBuilder;
+
+// Extract only public IPs (recommended for most use cases)
+let extractor = ExtractorBuilder::new()
+    .only_public()
+    .build()?;
+
+// Extract only IPv4, ignoring loopback
+let extractor = ExtractorBuilder::new()
+    .ipv6(false)
+    .ignore_loopback()
+    .build()?;
+
+// Fine-grained control
+let extractor = ExtractorBuilder::new()
+    .ipv4(true)
+    .ipv6(true)
+    .ignore_private()
+    .ignore_broadcast()
+    .build()?;
 ```
 
 ## Benchmarks
@@ -68,6 +92,23 @@ cargo bench --bench ip_benchmark
    - Hand-optimized IPv4 parser (faster than `std::net`)
    - Boundary checking prevents false matches (e.g., `1.2.3.4.5` rejected)
    - Configurable filters for special ranges
+
+## API Defaults
+
+By default, `ExtractorBuilder::new()` extracts **all IP addresses**:
+
+- ✅ **IPv4**: Enabled
+- ✅ **IPv6**: Enabled
+- ✅ **Private IPs**: Enabled (RFC 1918, IPv6 ULA)
+- ✅ **Loopback**: Enabled (127.0.0.0/8, ::1)
+- ✅ **Broadcast**: Enabled (255.255.255.255, link-local)
+
+Use convenience methods to filter:
+
+- `.only_public()` - Extract only publicly routable IPs
+- `.ignore_private()` - Skip RFC 1918 and IPv6 ULA ranges
+- `.ignore_loopback()` - Skip loopback addresses
+- `.ignore_broadcast()` - Skip broadcast addresses
 
 ## Limitations
 
