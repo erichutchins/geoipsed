@@ -272,11 +272,12 @@ impl Extractor {
                     if s > 0 && is_ip_char(haystack[s - 1]) {
                         continue;
                     }
+
                     if validator.validate(&haystack[s..end]) {
                         if end < haystack.len() && is_ip_char(haystack[end]) {
                             break;
                         }
-                        actual_start = Some(s);
+                        actual_start = Some(s..end);
                         break;
                     }
                 }
@@ -284,8 +285,8 @@ impl Extractor {
                 // Advance input.
                 input.set_start(end);
 
-                if let Some(s) = actual_start {
-                    return Some(s..end);
+                if let Some(range) = actual_start {
+                    return Some(range);
                 }
 
                 if end >= haystack.len() {

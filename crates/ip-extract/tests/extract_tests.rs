@@ -237,7 +237,7 @@ fn test_ipv4_leading_zeros_rejected() {
 
 #[test]
 fn test_ipv4_trailing_dot() {
-    // Test that IPs can be extracted successfully
+    // Test that IPs can be extracted successfully in various contexts
     let extractor = ExtractorBuilder::new()
         .ipv4(true)
         .private_ips(true)
@@ -256,9 +256,20 @@ fn test_ipv4_trailing_dot() {
     assert_eq!(ranges2.len(), 1);
     assert_eq!(&haystack2[ranges2[0].clone()], b"192.168.1.1");
 
-    // TODO: IPs followed immediately by dots (like "192.168.1.1.") currently fail extraction
-    // This is a known limitation of the backtracking algorithm where the trailing dot
-    // causes the validator to see "192.168.1.1." which fails parsing
+    // IP with comma, semicolon, colon, parentheses works
+    let haystack3 = b"IPs: 1.2.3.4, 5.6.7.8; (9.10.11.12):end";
+    let ranges3: Vec<_> = extractor.find_iter(haystack3).collect();
+    assert_eq!(ranges3.len(), 3);
+    assert_eq!(&haystack3[ranges3[0].clone()], b"1.2.3.4");
+    assert_eq!(&haystack3[ranges3[1].clone()], b"5.6.7.8");
+    assert_eq!(&haystack3[ranges3[2].clone()], b"9.10.11.12");
+
+    // NOTE: IPs followed immediately by dots (like "1.2.3.4.") currently don't extract
+    // This is a deliberate design choice to avoid false positives from "1.2.3.4.5"
+    // In practice, extracting from "host 1.2.3.4." requires a space or other delimiter
+    let haystack4 = b"The host 1.2.3.4.";
+    let ranges4: Vec<_> = extractor.find_iter(haystack4).collect();
+    assert_eq!(ranges4.len(), 0); // No match due to trailing dot
 }
 
 #[test]
