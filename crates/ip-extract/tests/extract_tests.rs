@@ -264,12 +264,19 @@ fn test_ipv4_trailing_dot() {
     assert_eq!(&haystack3[ranges3[1].clone()], b"5.6.7.8");
     assert_eq!(&haystack3[ranges3[2].clone()], b"9.10.11.12");
 
-    // NOTE: IPs followed immediately by dots (like "1.2.3.4.") currently don't extract
-    // This is a deliberate design choice to avoid false positives from "1.2.3.4.5"
-    // In practice, extracting from "host 1.2.3.4." requires a space or other delimiter
-    let haystack4 = b"The host 1.2.3.4.";
+    // IPs followed by dots (sentence endings) now work correctly!
+    // The trailing dot is stripped by the backtracking algorithm for IPv4
+    let haystack4 = b"The C2 IP was 192.168.1.1.";
     let ranges4: Vec<_> = extractor.find_iter(haystack4).collect();
-    assert_eq!(ranges4.len(), 0); // No match due to trailing dot
+    assert_eq!(ranges4.len(), 1);
+    assert_eq!(&haystack4[ranges4[0].clone()], b"192.168.1.1");
+
+    // Multiple IPs with trailing dots work
+    let haystack5 = b"First: 1.2.3.4. Second: 5.6.7.8. End.";
+    let ranges5: Vec<_> = extractor.find_iter(haystack5).collect();
+    assert_eq!(ranges5.len(), 2);
+    assert_eq!(&haystack5[ranges5[0].clone()], b"1.2.3.4");
+    assert_eq!(&haystack5[ranges5[1].clone()], b"5.6.7.8");
 }
 
 #[test]
