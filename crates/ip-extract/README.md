@@ -10,16 +10,6 @@ Extract IPv4 and IPv6 addresses from unstructured text with minimal overhead. Th
 - 🎯 **Strict Validation**: Deep validation eliminates false positives (e.g., rejects `1.2.3.4.5`)
 - ⚙️ **Configurable**: Fine-grained control over address types (private, loopback, broadcast)
 - 🔢 **Byte-Oriented**: Zero-copy scanning directly on byte slices, no UTF-8 validation overhead
-- 📦 **Zero Dependencies**: Minimal attack surface with essential dependencies only
-
-## Usage
-
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-ip-extract = { path = "crates/ip-extract" } # Adjust path as needed
-```
 
 ### Basic Example
 
