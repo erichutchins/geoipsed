@@ -31,4 +31,17 @@ features = [
     "nfa",
     "dfa-onepass",
     "hybrid",
+    "dfa",
+    "perf-literal",
 ]
+
+[build-dependencies]
+regex-automata = { version = "0.4.9", features = ["std", "syntax", "dfa-build", "dfa-search"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "ip_benchmark"
+harness = false

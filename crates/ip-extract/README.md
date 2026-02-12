@@ -44,12 +44,18 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-## How it Works
+## Performance Architecture
 
-`ip-extract` combines powerful regular expression matching with manual validation. While the regex identifies potential IP-like strings, the internal validator checks for:
-- Proper octet ranges (0-255).
-- Leading zero restrictions (matching `std::net::Ipv4Addr` behavior).
-- IPv6 formatting rules.
-- Specific address types (private, loopback, etc.) based on your configuration.
+`ip-extract` is built for maximum throughput:
+- **Compile-Time DFA**: The regex patterns are compiled into a dense Forward DFA during the build process. Initialization is zero-cost, and scanning is O(n) with no runtime backtracking.
+- **Strict Boundary Logic**: The engine ensures matched IPs are not sub-tokens of larger IP-like garbage (e.g., `1.2.3.4.5` is correctly ignored).
+- **Static Footprint**: The pre-compiled DFA is embedded in the binary (~600KB), eliminating heap allocation for regex state during scanning.
 
-This two-stage approach ensures that the scanner remains extremely fast while maintaining high accuracy.
+## Limitations
+
+To maintain extreme performance, this engine has a few intentional constraints:
+- **No IPv6 Scope IDs**: Formats like `fe80::1%eth0` are considered out of scope and will not be matched.
+- **Strict Character Boundaries**: Matches are expected to be separated by non-IP characters (spaces, punctuation, etc.). Very tightly packed or malformed IP sequences might be skipped to ensure zero false positives.
+- **Strict IPv4**: Only standard four-octet dotted notation is supported (e.g., `1.2.3.4`).
+
+This two-stage approach (Static DFA + Targeted Validation) ensures that the scanner remains extremely fast while maintaining high accuracy.
