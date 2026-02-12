@@ -274,7 +274,34 @@ impl Extractor {
                     }
 
                     if validator.validate(&haystack[s..end]) {
-                        if end < haystack.len() && is_ip_char(haystack[end]) {
+                        // Right boundary check: ensure the IP isn't part of a longer sequence
+                        // For IPv4: allow trailing dots (sentence endings) but reject digits/hex
+                        // For IPv6: reject any IP character
+                        let valid_boundary = if end < haystack.len() {
+                            let next_char = haystack[end];
+                            match validator {
+                                ValidatorType::IPv4 { .. } => {
+                                    // Reject digits immediately after (e.g., "1.2.3.4" followed by "5")
+                                    // Reject dot+digit combination (e.g., "1.2.3.4.5")
+                                    if next_char.is_ascii_digit() {
+                                        false
+                                    } else if next_char == b'.' && end + 1 < haystack.len() {
+                                        // If next is a dot, check if it's followed by a digit
+                                        !haystack[end + 1].is_ascii_digit()
+                                    } else {
+                                        true
+                                    }
+                                }
+                                ValidatorType::IPv6 { .. } => {
+                                    // Reject all IP characters for IPv6
+                                    !is_ip_char(next_char)
+                                }
+                            }
+                        } else {
+                            true
+                        };
+
+                        if !valid_boundary {
                             break;
                         }
                         actual_start = Some(s..end);
