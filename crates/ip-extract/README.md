@@ -1,12 +1,12 @@
 # ip-extract
 
-A **blazingly fast** IP address extraction library for Rust.
+A fast IP address extraction library for Rust.
 
 Extract IPv4 and IPv6 addresses from unstructured text with minimal overhead. This crate powers the core extraction engine for [`geoipsed`](https://github.com/erichutchins/geoipsed) and is designed for high-throughput scanning of large datasets.
 
 ## Features
 
-- ⚡ **Blazing Fast**: Compile-time DFA with O(n) scanning, no runtime regex compilation
+- ⚡ **Performance Optimized**: Compile-time DFA with O(n) scanning, no runtime regex compilation
 - 🎯 **Strict Validation**: Deep validation eliminates false positives (e.g., rejects `1.2.3.4.5`)
 - ⚙️ **Configurable**: Fine-grained control over address types (private, loopback, broadcast)
 - 🔢 **Byte-Oriented**: Zero-copy scanning directly on byte slices, no UTF-8 validation overhead
@@ -89,7 +89,7 @@ cargo bench --bench ip_benchmark
    - Validation only on candidates, not all scanned bytes
 
 3. **Strict Validation**
-   - Hand-optimized IPv4 parser (faster than `std::net`)
+   - Hand-optimized[^1] IPv4 parser (20-30% faster than `std::net`)
    - Boundary checking prevents false matches (e.g., `1.2.3.4.5` rejected)
    - Configurable filters for special ranges
 
@@ -114,8 +114,10 @@ Use convenience methods to filter:
 
 By design, this engine makes conservative choices for performance:
 
-- **IPv6 Scope IDs Not Captured**: Formats like `fe80::1%eth0` will extract as `fe80::1` (the scope ID `%eth0` is treated as a boundary and dropped). Zone IDs are rare in practice and typically only appear in command-line tools, not in logs or data.
 - **Strict Boundaries**: IPs must be separated by non-IP characters; concatenated IPs without separators may be skipped
 - **Standard IPv4 Only**: Four-octet dotted notation only (e.g., `192.168.0.1` only, not `0xC0A80001`, not `3232235521`, and not `11000000.10101000.00000000.00000001`)
+- **IPv6 Scope IDs Not Captured**: Formats like `fe80::1%eth0` will extract as `fe80::1` (the scope ID `%eth0` is treated as a boundary and dropped).
 
-These constraints ensure zero false positives and maximum scanning performance.
+These constraints ensure minimal false positives and maximum scanning performance.
+
+[^1]: AI wrote all of this. It does not have hands.
