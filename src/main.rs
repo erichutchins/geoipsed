@@ -220,14 +220,24 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     )?;
 
     // Build the IP extractor with appropriate settings
-    let extractor = ExtractorBuilder::new()
-        .ipv4(true)
-        .ipv6(true)
-        .private_ips(include_private)
-        .loopback_ips(include_loopback)
-        .broadcast_ips(include_broadcast)
-        .only_routable(args.only_routable)
-        .build()?;
+    // New defaults include all IP types. Use ignore_*() to opt-out or .only_public() for convenience.
+    let extractor = if !include_private && !include_loopback && !include_broadcast {
+        // All filters active - use convenience method
+        ExtractorBuilder::new().only_public().build()?
+    } else {
+        // Granular control with chaining
+        let mut builder = ExtractorBuilder::new();
+        if !include_private {
+            builder.ignore_private();
+        }
+        if !include_loopback {
+            builder.ignore_loopback();
+        }
+        if !include_broadcast {
+            builder.ignore_broadcast();
+        }
+        builder.build()?
+    };
 
     let mut out = io::BufWriter::with_capacity(65536, StandardStream::stdout(colormode));
 
