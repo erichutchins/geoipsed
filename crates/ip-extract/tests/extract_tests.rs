@@ -480,3 +480,92 @@ fn test_parse_ipv4_bytes_public_function() {
     assert!(parse_ipv4_bytes(b"").is_none()); // Empty
     assert!(parse_ipv4_bytes(b"not.an.ip.addr").is_none()); // Non-numeric
 }
+
+#[test]
+fn test_json_string_with_single_ip() {
+    // Test JSON string where the value is exactly one IP
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .private_ips(true) // Enable private IPs (192.168.x.x, 172.16.x.x, 10.x.x.x)
+        .build()
+        .unwrap();
+
+    // IPv4 as complete value
+    let json1 = br#"{"src_ip":"192.168.1.1"}"#;
+    let ranges1: Vec<_> = extractor.find_iter(json1).collect();
+    assert_eq!(ranges1.len(), 1);
+    assert_eq!(&json1[ranges1[0].clone()], b"192.168.1.1");
+
+    // IPv6 as complete value
+    let json2 = br#"{"dst_ip":"2001:db8::1"}"#;
+    let ranges2: Vec<_> = extractor.find_iter(json2).collect();
+    assert_eq!(ranges2.len(), 1);
+    assert_eq!(&json2[ranges2[0].clone()], b"2001:db8::1");
+
+    // IP at start of string value
+    let json3 = br#"{"msg":"192.168.1.1 connected"}"#;
+    let ranges3: Vec<_> = extractor.find_iter(json3).collect();
+    assert_eq!(ranges3.len(), 1);
+    assert_eq!(&json3[ranges3[0].clone()], b"192.168.1.1");
+
+    // IP at end of string value
+    let json4 = br#"{"msg":"Connection from 10.0.0.5"}"#;
+    let ranges4: Vec<_> = extractor.find_iter(json4).collect();
+    assert_eq!(ranges4.len(), 1);
+    assert_eq!(&json4[ranges4[0].clone()], b"10.0.0.5");
+
+    // IP in middle of string value
+    let json5 = br#"{"msg":"Host 172.16.0.1 responded"}"#;
+    let ranges5: Vec<_> = extractor.find_iter(json5).collect();
+    assert_eq!(ranges5.len(), 1);
+    assert_eq!(&json5[ranges5[0].clone()], b"172.16.0.1");
+}
+
+#[test]
+fn test_json_string_with_multiple_ips() {
+    // Test JSON string with multiple IPs in log-like format
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .private_ips(true) // Enable private IPs for test data
+        .build()
+        .unwrap();
+
+    // Multiple IPv4 addresses in syslog-style message
+    let json1 = br#"{"syslog":"2024-01-15 Connection from 192.168.1.100 to 10.0.0.50 port 443"}"#;
+    let ranges1: Vec<_> = extractor.find_iter(json1).collect();
+    assert_eq!(ranges1.len(), 2);
+    assert_eq!(&json1[ranges1[0].clone()], b"192.168.1.100");
+    assert_eq!(&json1[ranges1[1].clone()], b"10.0.0.50");
+
+    // Mixed IPv4 and IPv6
+    let json2 = br#"{"log":"src=8.8.8.8 dst=2001:4860:4860::8888 proto=tcp"}"#;
+    let ranges2: Vec<_> = extractor.find_iter(json2).collect();
+    assert_eq!(ranges2.len(), 2);
+    assert_eq!(&json2[ranges2[0].clone()], b"8.8.8.8");
+    assert_eq!(&json2[ranges2[1].clone()], b"2001:4860:4860::8888");
+
+    // Multiple IPs with various separators
+    let json3 = br#"{"ips":"1.1.1.1, 8.8.8.8; 9.9.9.9 | 1.0.0.1"}"#;
+    let ranges3: Vec<_> = extractor.find_iter(json3).collect();
+    assert_eq!(ranges3.len(), 4);
+    assert_eq!(&json3[ranges3[0].clone()], b"1.1.1.1");
+    assert_eq!(&json3[ranges3[1].clone()], b"8.8.8.8");
+    assert_eq!(&json3[ranges3[2].clone()], b"9.9.9.9");
+    assert_eq!(&json3[ranges3[3].clone()], b"1.0.0.1");
+
+    // Complex nested JSON with multiple IPs
+    let json4 = br#"{"event":"firewall","src":"192.168.1.5","dst":"203.0.113.10","details":"Blocked connection from 192.168.1.5 to 203.0.113.10"}"#;
+    let ranges4: Vec<_> = extractor.find_iter(json4).collect();
+    assert_eq!(ranges4.len(), 4); // Each IP appears twice
+    assert_eq!(&json4[ranges4[0].clone()], b"192.168.1.5");
+    assert_eq!(&json4[ranges4[1].clone()], b"203.0.113.10");
+    assert_eq!(&json4[ranges4[2].clone()], b"192.168.1.5");
+    assert_eq!(&json4[ranges4[3].clone()], b"203.0.113.10");
+
+    // Empty IP list in JSON
+    let json5 = br#"{"ips":"","message":"no ips here"}"#;
+    let ranges5: Vec<_> = extractor.find_iter(json5).collect();
+    assert_eq!(ranges5.len(), 0);
+}
