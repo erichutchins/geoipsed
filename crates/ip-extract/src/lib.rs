@@ -269,6 +269,7 @@ impl Extractor {
 
                 let mut actual_start = None;
                 for s in start_scan..end {
+                    // Check left boundary: reject if preceded by an IP character (would extend the match)
                     if s > 0 && is_ip_char(haystack[s - 1]) {
                         continue;
                     }
