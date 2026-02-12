@@ -78,7 +78,7 @@
 //!
 //! See `benches/ip_benchmark.rs` for details.
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 use std::sync::OnceLock;
 
@@ -168,12 +168,10 @@ enum ValidatorType {
         include_private: bool,
         include_loopback: bool,
         include_broadcast: bool,
-        only_routable: bool,
     },
     IPv6 {
         include_private: bool,
         include_loopback: bool,
-        only_routable: bool,
     },
 }
 
@@ -185,19 +183,11 @@ impl ValidatorType {
                 include_private,
                 include_loopback,
                 include_broadcast,
-                only_routable,
-            } => validate_ipv4(
-                bytes,
-                include_private,
-                include_loopback,
-                include_broadcast,
-                only_routable,
-            ),
+            } => validate_ipv4(bytes, include_private, include_loopback, include_broadcast),
             ValidatorType::IPv6 {
                 include_private,
                 include_loopback,
-                only_routable,
-            } => validate_ipv6(bytes, include_private, include_loopback, only_routable),
+            } => validate_ipv6(bytes, include_private, include_loopback),
         }
     }
 }
@@ -337,7 +327,6 @@ pub struct ExtractorBuilder {
     include_private: bool,
     include_loopback: bool,
     include_broadcast: bool,
-    only_routable: bool,
 }
 
 impl Default for ExtractorBuilder {
@@ -373,7 +362,6 @@ impl ExtractorBuilder {
             include_private: false,
             include_loopback: false,
             include_broadcast: false,
-            only_routable: false,
         }
     }
     /// Enable or disable IPv4 address extraction.
@@ -428,17 +416,6 @@ impl ExtractorBuilder {
         self
     }
 
-    /// Only extract routable (public) IP addresses.
-    ///
-    /// When enabled, excludes all private, loopback, and broadcast addresses.
-    /// This is a convenience shortcut equivalent to disabling all special ranges.
-    ///
-    /// Default: `false`
-    pub fn only_routable(&mut self, only: bool) -> &mut Self {
-        self.only_routable = only;
-        self
-    }
-
     /// Build and return an `Extractor` with the configured settings.
     ///
     /// # Errors
@@ -468,12 +445,10 @@ impl ExtractorBuilder {
                         include_private: self.include_private,
                         include_loopback: self.include_loopback,
                         include_broadcast: self.include_broadcast,
-                        only_routable: self.only_routable,
                     },
                     ValidatorType::IPv6 {
                         include_private: self.include_private,
                         include_loopback: self.include_loopback,
-                        only_routable: self.only_routable,
                     },
                 ],
             ),
@@ -483,7 +458,6 @@ impl ExtractorBuilder {
                     include_private: self.include_private,
                     include_loopback: self.include_loopback,
                     include_broadcast: self.include_broadcast,
-                    only_routable: self.only_routable,
                 }],
             ),
             (false, true) => (
@@ -491,7 +465,6 @@ impl ExtractorBuilder {
                 vec![ValidatorType::IPv6 {
                     include_private: self.include_private,
                     include_loopback: self.include_loopback,
-                    only_routable: self.only_routable,
                 }],
             ),
             _ => anyhow::bail!("No IP address patterns selected"),
@@ -506,7 +479,6 @@ fn validate_ipv4(
     include_private: bool,
     include_loopback: bool,
     include_broadcast: bool,
-    _only_routable: bool,
 ) -> bool {
     let ipv4 = match parse_ipv4_bytes(bytes) {
         Some(ip) => ip,
@@ -590,13 +562,15 @@ pub fn parse_ipv4_bytes(bytes: &[u8]) -> Option<Ipv4Addr> {
     Some(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
 }
 
+/// Check if an IPv6 address is a Unique Local Address (ULA) per RFC 4193.
+/// ULA addresses are in the fc00::/7 range (fc00:: to fdff::).
 #[inline]
-fn validate_ipv6(
-    bytes: &[u8],
-    include_private: bool,
-    include_loopback: bool,
-    _only_routable: bool,
-) -> bool {
+fn is_unique_local(ip: &Ipv6Addr) -> bool {
+    matches!(ip.octets()[0], 0xfc | 0xfd)
+}
+
+#[inline]
+fn validate_ipv6(bytes: &[u8], include_private: bool, include_loopback: bool) -> bool {
     if bytes.len() < 2 {
         return false;
     }
@@ -607,7 +581,7 @@ fn validate_ipv6(
     };
     match ip {
         IpAddr::V6(ipv6) => {
-            if !include_private && ipv6.is_unicast_link_local() {
+            if !include_private && (ipv6.is_unicast_link_local() || is_unique_local(&ipv6)) {
                 return false;
             }
             if !include_loopback && ipv6.is_loopback() {
