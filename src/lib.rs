@@ -7,8 +7,8 @@
 //!
 //! Creating and registering a custom MMDB provider:
 //!
-//! ```rust,no_run
-//! use geoipsed::{MmdbProvider, ProviderRegistry, TemplateField};
+//! ```rust,ignore
+//! use geoipsed::{MmdbProvider, ProviderRegistry, TemplateField, template::Template};
 //! use std::path::{Path, PathBuf};
 //! use anyhow::Result;
 //!
@@ -51,7 +51,7 @@
 //!         &self,
 //!         _ip: std::net::IpAddr,
 //!         ip_str: &str,
-//!         template: &crate::template::Template,
+//!         template: &Template,
 //!     ) -> Result<String> {
 //!         Ok(template.render(|field| match field {
 //!             "ip" => ip_str,
@@ -64,7 +64,7 @@
 //!         wtr: &mut dyn std::io::Write,
 //!         _ip: std::net::IpAddr,
 //!         ip_str: &str,
-//!         template: &crate::template::Template,
+//!         template: &Template,
 //!     ) -> Result<()> {
 //!         template.write(wtr, |out, field| match field {
 //!             "ip" => out.write_all(ip_str.as_bytes()),
