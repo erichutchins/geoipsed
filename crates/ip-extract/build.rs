@@ -13,6 +13,8 @@ use regex_automata::MatchKind;
 /// - [01]?[0-9][0-9]? matches 0-199
 ///
 /// The pattern matches anywhere in text; boundary validation is done in lib.rs.
+/// Note: regex-automata doesn't support lookahead/lookbehind, so right boundary
+/// checking happens in the backtracking algorithm (see is_ip_char in lib.rs).
 static IPV4_PATTERN: &str = r"(?x)
   (?:
     (?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)  # First octet
