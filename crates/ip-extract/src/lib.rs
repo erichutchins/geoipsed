@@ -261,23 +261,22 @@ impl Extractor {
                 let pid = m.pattern().as_usize();
                 let validator = &self.validators[pid];
 
-                // Backtrack to find the start. IPv6 with zone ID is max ~45 bytes.
-                let mut start_scan = end.saturating_sub(46);
+                // Backtrack to find the start. Max IPv6 is 39 bytes, use 40 for safety margin.
+                let mut start_scan = end.saturating_sub(40);
                 while start_scan < end && !is_ip_char(haystack[start_scan]) {
                     start_scan += 1;
                 }
 
                 let mut actual_start = None;
                 for s in start_scan..end {
-                    // Check left boundary: reject if preceded by an IP character (would extend the match)
                     if s > 0 && is_ip_char(haystack[s - 1]) {
                         continue;
                     }
 
                     if validator.validate(&haystack[s..end]) {
                         // Right boundary check: ensure the IP isn't part of a longer sequence
-                        // For IPv4: allow trailing dots (sentence endings) but reject digits/hex
-                        // For IPv6: reject any IP character
+                        // For IPv4: allow trailing dots (sentence endings) but reject digits
+                        // For IPv6: reject digits, hex letters, dots, or colons
                         let valid_boundary = if end < haystack.len() {
                             let next_char = haystack[end];
                             match validator {
@@ -327,7 +326,7 @@ impl Extractor {
 
 #[inline(always)]
 fn is_ip_char(b: u8) -> bool {
-    matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'.' | b':' | b'%')
+    matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'.' | b':')
 }
 
 /// A builder for configuring IP extraction behavior.
