@@ -103,12 +103,10 @@ fn test_mixed_versions_tight() {
 #[test]
 fn test_ipv4_boundary_values() {
     // Min and max values (note: 255.255.255.255 is broadcast and 192.168.1.1 is private)
-    // We need to include broadcast and private to see them all
+    // Defaults include all IP types
     let extractor = ExtractorBuilder::new()
         .ipv4(true)
         .ipv6(false)
-        .private_ips(true)
-        .broadcast_ips(true)
         .build()
         .unwrap();
 
@@ -174,7 +172,7 @@ fn test_ipv4_link_local() {
     let extractor = ExtractorBuilder::new()
         .ipv4(true)
         .ipv6(false)
-        .broadcast_ips(false)
+        .ignore_broadcast()
         .build()
         .unwrap();
 
@@ -193,7 +191,7 @@ fn test_ipv4_broadcast_address() {
     let extractor = ExtractorBuilder::new()
         .ipv4(true)
         .ipv6(false)
-        .broadcast_ips(false)
+        .ignore_broadcast()
         .build()
         .unwrap();
 
@@ -238,11 +236,7 @@ fn test_ipv4_leading_zeros_rejected() {
 #[test]
 fn test_ipv4_trailing_dot() {
     // Test that IPs can be extracted successfully in various contexts
-    let extractor = ExtractorBuilder::new()
-        .ipv4(true)
-        .private_ips(true)
-        .build()
-        .unwrap();
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
 
     // IP without trailing dot works fine
     let haystack1 = b"192.168.1.1";
@@ -421,10 +415,10 @@ fn test_ipv4_only_extractor() {
     let extractor = ExtractorBuilder::new()
         .ipv4(true)
         .ipv6(false)
-        .private_ips(true) // Need to include private to see 192.168.1.1
         .build()
         .unwrap();
 
+    // Should extract IPv4 but skip IPv6
     let haystack = b"IPv4: 192.168.1.1, IPv6: 2001:db8::1";
     let actual: Vec<String> = extractor
         .find_iter(haystack)
@@ -432,6 +426,24 @@ fn test_ipv4_only_extractor() {
         .collect();
 
     assert_eq!(actual, vec!["192.168.1.1"]);
+
+    // Multiple IPv4, multiple IPv6 - should only get IPv4
+    let haystack2 = b"Servers: 10.0.0.1, 8.8.8.8, fe80::1, 2001:db8::1";
+    let actual2: Vec<String> = extractor
+        .find_iter(haystack2)
+        .map(|range| String::from_utf8_lossy(&haystack2[range]).to_string())
+        .collect();
+
+    assert_eq!(actual2, vec!["10.0.0.1", "8.8.8.8"]);
+
+    // Only IPv6 present - should extract nothing
+    let haystack3 = b"IPv6 only: 2001:db8::1, ::1, fe80::dead:beef";
+    let actual3: Vec<String> = extractor
+        .find_iter(haystack3)
+        .map(|range| String::from_utf8_lossy(&haystack3[range]).to_string())
+        .collect();
+
+    assert_eq!(actual3.len(), 0);
 }
 
 #[test]
@@ -442,6 +454,7 @@ fn test_ipv6_only_extractor() {
         .build()
         .unwrap();
 
+    // Should extract IPv6 but skip IPv4
     let haystack = b"IPv4: 192.168.1.1, IPv6: 2001:db8::1";
     let actual: Vec<String> = extractor
         .find_iter(haystack)
@@ -449,6 +462,36 @@ fn test_ipv6_only_extractor() {
         .collect();
 
     assert_eq!(actual, vec!["2001:db8::1"]);
+
+    // Multiple IPv6, multiple IPv4 - should only get IPv6
+    let haystack2 = b"Servers: 10.0.0.1, fe80::1, 8.8.8.8, 2001:db8::1";
+    let actual2: Vec<String> = extractor
+        .find_iter(haystack2)
+        .map(|range| String::from_utf8_lossy(&haystack2[range]).to_string())
+        .collect();
+
+    assert_eq!(actual2, vec!["fe80::1", "2001:db8::1"]);
+
+    // Only IPv4 present - should extract nothing
+    let haystack3 = b"IPv4 only: 192.168.1.1, 10.0.0.1, 127.0.0.1";
+    let actual3: Vec<String> = extractor
+        .find_iter(haystack3)
+        .map(|range| String::from_utf8_lossy(&haystack3[range]).to_string())
+        .collect();
+
+    assert_eq!(actual3.len(), 0);
+
+    // Test various IPv6 formats
+    let haystack4 = b"Formats: ::1, 2001:db8::, fe80::dead:beef, fc00::1";
+    let actual4: Vec<String> = extractor
+        .find_iter(haystack4)
+        .map(|range| String::from_utf8_lossy(&haystack4[range]).to_string())
+        .collect();
+
+    assert_eq!(
+        actual4,
+        vec!["::1", "2001:db8::", "fe80::dead:beef", "fc00::1"]
+    );
 }
 
 #[test]
@@ -487,7 +530,6 @@ fn test_json_string_with_single_ip() {
     let extractor = ExtractorBuilder::new()
         .ipv4(true)
         .ipv6(true)
-        .private_ips(true) // Enable private IPs (192.168.x.x, 172.16.x.x, 10.x.x.x)
         .build()
         .unwrap();
 
@@ -528,7 +570,6 @@ fn test_json_string_with_multiple_ips() {
     let extractor = ExtractorBuilder::new()
         .ipv4(true)
         .ipv6(true)
-        .private_ips(true) // Enable private IPs for test data
         .build()
         .unwrap();
 

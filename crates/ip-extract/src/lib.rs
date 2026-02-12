@@ -11,14 +11,14 @@
 //!
 //! ## Quick Start
 //!
+//! By default, **all IP addresses are extracted**:
+//!
 //! ```no_run
 //! use ip_extract::ExtractorBuilder;
 //!
 //! # fn main() -> anyhow::Result<()> {
-//! let extractor = ExtractorBuilder::new()
-//!     .ipv4(true)
-//!     .ipv6(true)
-//!     .build()?;
+//! // Extract all IPs (default: includes private, loopback, broadcast)
+//! let extractor = ExtractorBuilder::new().build()?;
 //!
 //! let input = b"Connect from 192.168.1.1 to 2001:db8::1";
 //! for range in extractor.find_iter(input) {
@@ -52,18 +52,23 @@
 //!
 //! ## Configuration
 //!
-//! Use `ExtractorBuilder` to customize which IP types are extracted:
+//! Use `ExtractorBuilder` to filter specific IP categories:
 //!
 //! ```no_run
 //! use ip_extract::ExtractorBuilder;
 //!
 //! # fn main() -> anyhow::Result<()> {
+//! // Extract only publicly routable IPs
 //! let extractor = ExtractorBuilder::new()
-//!     .ipv4(true)           // Extract IPv4
-//!     .ipv6(true)           // Extract IPv6
-//!     .private_ips(false)   // Skip RFC 1918 ranges
-//!     .loopback_ips(false)  // Skip loopback (127.0.0.1, ::1)
-//!     .broadcast_ips(false) // Skip broadcast addresses
+//!     .only_public()
+//!     .build()?;
+//!
+//! // Or use granular control
+//! let extractor = ExtractorBuilder::new()
+//!     .ipv4(true)            // Extract IPv4 (default: true)
+//!     .ipv6(false)           // Skip IPv6
+//!     .ignore_private()      // Skip RFC 1918 ranges
+//!     .ignore_loopback()     // Skip loopback (127.0.0.1, ::1)
 //!     .build()?;
 //! # Ok(())
 //! # }
@@ -366,20 +371,33 @@ impl Default for ExtractorBuilder {
 impl ExtractorBuilder {
     /// Create a new builder with default settings.
     ///
+    /// By default, **all IP addresses are extracted** (principle of least surprise).
+    /// Use `.only_public()` or `.ignore_*()` methods to filter specific categories.
+    ///
     /// Defaults:
     /// - IPv4: enabled
     /// - IPv6: enabled
-    /// - Private IPs: disabled (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
-    /// - Loopback IPs: disabled (127.0.0.0/8, ::1)
-    /// - Broadcast IPs: disabled (255.255.255.255, link-local)
+    /// - Private IPs: **enabled** (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7)
+    /// - Loopback IPs: **enabled** (127.0.0.0/8, ::1)
+    /// - Broadcast IPs: **enabled** (255.255.255.255, link-local)
     ///
-    /// # Example
+    /// # Examples
     ///
     /// ```no_run
     /// use ip_extract::ExtractorBuilder;
     ///
     /// # fn main() -> anyhow::Result<()> {
+    /// // Extract all IPs (default)
     /// let extractor = ExtractorBuilder::new().build()?;
+    ///
+    /// // Extract only public IPs
+    /// let extractor = ExtractorBuilder::new().only_public().build()?;
+    ///
+    /// // Granular control
+    /// let extractor = ExtractorBuilder::new()
+    ///     .ignore_private()
+    ///     .ignore_loopback()
+    ///     .build()?;
     /// # Ok(())
     /// # }
     /// ```
@@ -387,9 +405,9 @@ impl ExtractorBuilder {
         Self {
             include_ipv4: true,
             include_ipv6: true,
-            include_private: false,
-            include_loopback: false,
-            include_broadcast: false,
+            include_private: true,
+            include_loopback: true,
+            include_broadcast: true,
         }
     }
     /// Enable or disable IPv4 address extraction.
@@ -414,7 +432,7 @@ impl ExtractorBuilder {
     /// - IPv4: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
     /// - IPv6: fc00::/7 (ULA), fe80::/10 (link-local)
     ///
-    /// Default: `false`
+    /// Default: `true`
     pub fn private_ips(&mut self, include: bool) -> &mut Self {
         self.include_private = include;
         self
@@ -426,7 +444,7 @@ impl ExtractorBuilder {
     /// - IPv4: 127.0.0.0/8
     /// - IPv6: ::1
     ///
-    /// Default: `false`
+    /// Default: `true`
     pub fn loopback_ips(&mut self, include: bool) -> &mut Self {
         self.include_loopback = include;
         self
@@ -438,9 +456,75 @@ impl ExtractorBuilder {
     /// - IPv4: 255.255.255.255 and link-local (169.254.0.0/16)
     /// - IPv6: link-local and other special ranges
     ///
-    /// Default: `false`
+    /// Default: `true`
     pub fn broadcast_ips(&mut self, include: bool) -> &mut Self {
         self.include_broadcast = include;
+        self
+    }
+
+    /// Ignore private IP addresses (convenience for `.private_ips(false)`).
+    ///
+    /// Excludes:
+    /// - IPv4: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+    /// - IPv6: fc00::/7 (ULA), fe80::/10 (link-local)
+    pub fn ignore_private(&mut self) -> &mut Self {
+        self.include_private = false;
+        self
+    }
+
+    /// Ignore loopback addresses (convenience for `.loopback_ips(false)`).
+    ///
+    /// Excludes:
+    /// - IPv4: 127.0.0.0/8
+    /// - IPv6: ::1
+    pub fn ignore_loopback(&mut self) -> &mut Self {
+        self.include_loopback = false;
+        self
+    }
+
+    /// Ignore broadcast addresses (convenience for `.broadcast_ips(false)`).
+    ///
+    /// Excludes:
+    /// - IPv4: 255.255.255.255 and link-local (169.254.0.0/16)
+    /// - IPv6: link-local and other special ranges
+    pub fn ignore_broadcast(&mut self) -> &mut Self {
+        self.include_broadcast = false;
+        self
+    }
+
+    /// Extract only publicly routable IP addresses.
+    ///
+    /// This is a convenience method equivalent to:
+    /// ```
+    /// # use ip_extract::ExtractorBuilder;
+    /// # let mut builder = ExtractorBuilder::new();
+    /// builder
+    ///     .ignore_private()
+    ///     .ignore_loopback()
+    ///     .ignore_broadcast();
+    /// ```
+    ///
+    /// Excludes:
+    /// - Private: RFC 1918 (IPv4), ULA (IPv6)
+    /// - Loopback: 127.0.0.0/8, ::1
+    /// - Broadcast: 255.255.255.255, link-local ranges
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ip_extract::ExtractorBuilder;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// let extractor = ExtractorBuilder::new()
+    ///     .only_public()
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn only_public(&mut self) -> &mut Self {
+        self.include_private = false;
+        self.include_loopback = false;
+        self.include_broadcast = false;
         self
     }
 
