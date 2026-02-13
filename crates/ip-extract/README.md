@@ -58,6 +58,37 @@ let extractor = ExtractorBuilder::new()
     .build()?;
 ```
 
+## Examples
+
+Run the included example to see IP extraction in action:
+
+```bash
+cargo run --example simple_extraction
+```
+
+Output:
+
+```
+Scanning text...
+
+  Found: 10.0.0.5 at 14..23
+  Found: 8.8.8.8 at 27..35
+  Found: 2001:4860:4860::8888 at 45..63
+
+--- Decorated Output ---
+Traffic from [10.0.0.5] to [8.8.8.8] and also [2001:4860:4860::8888]
+
+--- JSON Output ---
+{"text":"Traffic from 10.0.0.5 to 8.8.8.8 and also 2001:4860:4860::8888","tags":[{"ip":"10.0.0.5","range":[14,23],"decoration":"[10.0.0.5]"},{"ip":"8.8.8.8","range":[27,35],"decoration":"[8.8.8.8]"},{"ip":"2001:4860:4860::8888","range":[45,63],"decoration":"[2001:4860:4860::8888]"}]}
+```
+
+The example demonstrates:
+
+1. Building an extractor with default settings (all IPs included)
+2. Scanning input text for IP addresses
+3. Creating tagged output with decorations
+4. Outputting results in both decorated text and JSON formats
+
 ## Benchmarks
 
 Typical throughput on modern hardware (see `benches/ip_benchmark.rs`):
