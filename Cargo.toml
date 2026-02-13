@@ -7,7 +7,7 @@ resolver = "2"
 
 [package]
 name = "geoipsed"
-version = "0.1.9"                                                       #:version
+version = "0.2.0"                                                       #:version
 authors = ["Eric Hutchins"]
 description = "Inline decoration of IPv4 and IPv6 address geolocations"
 homepage = "https://github.com/erichutchins/geoipsed"
