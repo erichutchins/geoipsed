@@ -216,3 +216,128 @@ fn test_invalid_ip() {
     let matches: Vec<_> = extractor.find_iter(bytes).collect();
     assert!(matches.is_empty());
 }
+
+// Tests for --only-routable feature
+
+#[test]
+fn test_only_routable_filters_non_routable_ips() {
+    setup_test_env();
+
+    let test_dir = Path::new("tests/maxmind");
+    let geoipsed_routable = GeoIPSed::new(
+        Some(test_dir.to_str().unwrap().into()),
+        None,
+        ColorChoice::Never,
+        true, // only_routable = true
+    )
+    .expect("Failed to create GeoIPSed instance with only_routable");
+
+    // 67.43.156.1 has AS35908 (routable)
+    let ip_routable = "67.43.156.1".parse().unwrap();
+    let result_routable = geoipsed_routable.lookup(ip_routable, "67.43.156.1");
+    assert!(
+        result_routable.contains("AS35908"),
+        "Expected routable IP to be decorated, got: {}",
+        result_routable
+    );
+
+    // 175.16.199.37 has AS0 (not routable)
+    let ip_non_routable = "175.16.199.37".parse().unwrap();
+    let result_non_routable = geoipsed_routable.lookup(ip_non_routable, "175.16.199.37");
+    assert_eq!(
+        result_non_routable, "175.16.199.37",
+        "Expected non-routable IP to be returned undecorated"
+    );
+}
+
+#[test]
+fn test_only_routable_ipv6() {
+    setup_test_env();
+
+    let test_dir = Path::new("tests/maxmind");
+    let geoipsed_routable = GeoIPSed::new(
+        Some(test_dir.to_str().unwrap().into()),
+        None,
+        ColorChoice::Never,
+        true, // only_routable = true
+    )
+    .expect("Failed to create GeoIPSed instance");
+
+    // 240b::beef:0:24 has AS2516 (routable)
+    let ip_routable = "240b::beef:0:24".parse().unwrap();
+    let result_routable = geoipsed_routable.lookup(ip_routable, "240b::beef:0:24");
+    assert!(
+        result_routable.contains("AS2516"),
+        "Expected routable IPv6 to be decorated, got: {}",
+        result_routable
+    );
+
+    // 2001:480::52 has AS0 (not routable)
+    let ip_non_routable = "2001:480::52".parse().unwrap();
+    let result_non_routable = geoipsed_routable.lookup(ip_non_routable, "2001:480::52");
+    assert_eq!(
+        result_non_routable, "2001:480::52",
+        "Expected non-routable IPv6 to be returned undecorated"
+    );
+}
+
+#[test]
+fn test_without_only_routable_shows_all_ips() {
+    setup_test_env();
+
+    let test_dir = Path::new("tests/maxmind");
+    let geoipsed_no_filter = GeoIPSed::new(
+        Some(test_dir.to_str().unwrap().into()),
+        None,
+        ColorChoice::Never,
+        false, // only_routable = false
+    )
+    .expect("Failed to create GeoIPSed instance");
+
+    // Both routable and non-routable IPs should be decorated
+    let ip_routable = "67.43.156.1".parse().unwrap();
+    let result_routable = geoipsed_no_filter.lookup(ip_routable, "67.43.156.1");
+    assert!(
+        result_routable.contains("AS35908"),
+        "Expected routable IP to be decorated"
+    );
+
+    let ip_non_routable = "175.16.199.37".parse().unwrap();
+    let result_non_routable = geoipsed_no_filter.lookup(ip_non_routable, "175.16.199.37");
+    assert!(
+        result_non_routable.contains("AS0"),
+        "Expected non-routable IP to still be decorated when only_routable=false, got: {}",
+        result_non_routable
+    );
+}
+
+#[test]
+fn test_only_routable_with_custom_template() {
+    setup_test_env();
+
+    let test_dir = Path::new("tests/maxmind");
+    let geoipsed_routable = GeoIPSed::new(
+        Some(test_dir.to_str().unwrap().into()),
+        Some("{ip}:{asnnum}".to_string()),
+        ColorChoice::Never,
+        true, // only_routable = true
+    )
+    .expect("Failed to create GeoIPSed instance");
+
+    // Routable IP should use custom template
+    let ip_routable = "67.43.156.1".parse().unwrap();
+    let result = geoipsed_routable.lookup(ip_routable, "67.43.156.1");
+    assert!(
+        result.contains("67.43.156.1:35908"),
+        "Expected custom template to be applied for routable IP, got: {}",
+        result
+    );
+
+    // Non-routable IP should bypass both filtering and template
+    let ip_non_routable = "175.16.199.37".parse().unwrap();
+    let result = geoipsed_routable.lookup(ip_non_routable, "175.16.199.37");
+    assert_eq!(
+        result, "175.16.199.37",
+        "Expected non-routable IP to bypass template"
+    );
+}

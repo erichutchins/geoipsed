@@ -219,3 +219,140 @@ testing_175.16.199.52@Asia/Harbin
 
     assert_eq!(output_str, expected_output);
 }
+
+/// Test --only-routable filters IPs with AS0 (not routable)
+/// Non-routable IPs are returned raw (no decoration)
+#[test]
+fn only_routable_basic() {
+    let args = ["--only-routable"];
+    let input = r#"
+67.43.156.1
+175.16.199.37
+214.78.0.40
+81.2.69.205
+"#
+    .trim_start_matches('\n');
+
+    let output_str = run_geoipsed(input, &args).expect("Failed to run geoipsed");
+
+    // IPs with valid (non-zero) ASN should be decorated
+    assert!(output_str.contains("<67.43.156.1"));
+    assert!(output_str.contains("AS35908"));
+    assert!(output_str.contains("<214.78.0.40"));
+    assert!(output_str.contains("AS721"));
+
+    // IPs with AS0 should appear raw (not decorated)
+    let lines: Vec<&str> = output_str.lines().collect();
+    for line in lines {
+        if line.contains("175.16.199.37") {
+            // Should be present but not decorated
+            assert!(
+                !line.contains("<175.16.199.37"),
+                "AS0 IP should not be decorated"
+            );
+        }
+        if line.contains("81.2.69.205") {
+            // Should be present but not decorated
+            assert!(
+                !line.contains("<81.2.69.205"),
+                "AS0 IP should not be decorated"
+            );
+        }
+    }
+}
+
+/// Test --only-routable with multiple IPs in one line
+#[test]
+fn only_routable_mixed() {
+    let args = ["--only-routable"];
+    let input = r#"
+seen 67.43.156.1 and 175.16.199.37 and 214.78.0.40
+"#
+    .trim_start_matches('\n');
+
+    let output_str = run_geoipsed(input, &args).expect("Failed to run geoipsed");
+
+    // IPs with valid ASN should be decorated
+    assert!(output_str.contains("<67.43.156.1"));
+    assert!(output_str.contains("AS35908"));
+
+    // IP with AS0 should appear raw (not decorated)
+    assert!(output_str.contains("175.16.199.37"));
+    assert!(!output_str.contains("<175.16.199.37"));
+
+    assert!(output_str.contains("<214.78.0.40"));
+    assert!(output_str.contains("AS721"));
+}
+
+/// Test --only-routable does not exclude IPs when flag is absent
+#[test]
+fn without_only_routable() {
+    let args = ["-o"];
+    let input = r#"
+67.43.156.1
+175.16.199.37
+81.2.69.205
+"#
+    .trim_start_matches('\n');
+
+    let output_str = run_geoipsed(input, &args).expect("Failed to run geoipsed");
+
+    // All IPs should be present when --only-routable is NOT used
+    assert!(output_str.contains("67.43.156.1"));
+    assert!(output_str.contains("175.16.199.37"));
+    assert!(output_str.contains("81.2.69.205"));
+
+    // All should have decorations
+    assert!(output_str.contains("<"));
+    assert!(output_str.contains(">"));
+}
+
+/// Test --only-routable with IPv6
+#[test]
+fn only_routable_ipv6() {
+    let args = ["--only-routable"];
+    let input = r#"
+2001:480::52
+240b::beef:0:24
+89.160.20.135
+"#
+    .trim_start_matches('\n');
+
+    let output_str = run_geoipsed(input, &args).expect("Failed to run geoipsed");
+
+    // 2001:480::52 has AS0 (not routable - should be raw)
+    let lines: Vec<&str> = output_str.lines().collect();
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("2001:480::52") && !line.contains("<2001:480::52")));
+
+    // 240b::beef:0:24 has AS2516 (valid - should be decorated)
+    assert!(output_str.contains("<240b::beef:0:24"));
+    assert!(output_str.contains("AS2516"));
+
+    // 89.160.20.135 has AS29518 (valid - should be decorated)
+    assert!(output_str.contains("<89.160.20.135"));
+    assert!(output_str.contains("AS29518"));
+}
+
+/// Test --only-routable combined with custom template
+#[test]
+fn only_routable_with_template() {
+    let args = ["--only-routable", "--template", "{ip}|{asnnum}"];
+    let input = r#"
+67.43.156.1
+175.16.199.37
+214.78.0.40
+"#
+    .trim_start_matches('\n');
+
+    let output_str = run_geoipsed(input, &args).expect("Failed to run geoipsed");
+
+    // Valid ASN IPs should have custom template applied
+    assert!(output_str.contains("67.43.156.1|35908"));
+    assert!(output_str.contains("214.78.0.40|721"));
+
+    // Non-routable IPs should appear raw (no template)
+    let lines: Vec<&str> = output_str.lines().collect();
+    assert!(lines.contains(&"175.16.199.37"));
+}

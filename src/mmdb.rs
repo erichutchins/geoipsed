@@ -509,12 +509,22 @@ impl MmdbProvider for MaxMindProvider {
             return false;
         }
 
-        // Check ASN reader
+        // Check ASN reader for non-zero ASN number
         if let Some(ref asn_reader) = self.asn_reader {
-            return asn_reader.lookup(ip).is_ok();
+            if let Some(asn_record) = asn_reader
+                .lookup(ip)
+                .ok()
+                .and_then(|lookup| lookup.decode::<FastAsn>().ok().flatten())
+            {
+                // Only consider routable if ASN is non-zero
+                if let Some(asn_num) = asn_record.autonomous_system_number {
+                    return asn_num != 0;
+                }
+            }
+            return false;
         }
 
-        // Check IPv4/IPv6 specific readers
+        // Check IPv4/IPv6 specific readers for non-zero ASN
         let is_ipv4 = matches!(ip, IpAddr::V4(_));
         let reader = if is_ipv4 {
             &self.ipv4_reader
@@ -523,7 +533,16 @@ impl MmdbProvider for MaxMindProvider {
         };
 
         if let Some(ref reader) = reader {
-            return reader.lookup(ip).is_ok();
+            if let Some(asn_record) = reader
+                .lookup(ip)
+                .ok()
+                .and_then(|lookup| lookup.decode::<FastAsn>().ok().flatten())
+            {
+                // Only consider routable if ASN is non-zero
+                if let Some(asn_num) = asn_record.autonomous_system_number {
+                    return asn_num != 0;
+                }
+            }
         }
 
         false

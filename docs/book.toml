@@ -2,7 +2,8 @@
 authors = ["Eric Hutchins"]
 language = "en"
 src = "src"
-title = "geoipsed Documentation"
+title = "geoipsed"
+description = "Extraction and inline decoration of IPv4 and IPv6 addresses"
 
 [output.html]
 git-repository-url = "https://github.com/erichutchins/geoipsed"
