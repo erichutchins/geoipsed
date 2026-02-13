@@ -137,7 +137,7 @@ if json_mode {
 1. Implement the `MmdbProvider` trait
 2. Define the MMDB format and field mappings
 3. Register the provider in `ProviderRegistry::default()`
-4. Update documentation in GUIDE.md
+4. Update documentation in `docs/src/guide.md`
 
 ## Testing Strategies
 
@@ -173,6 +173,13 @@ if json_mode {
 - IP2Location: https://www.ip2location.com/
 - IPinfo: https://ipinfo.io/
 - https://github.com/sapics/ip-location-db (collection of free IP databases)
+
+## Common Commands
+
+- `just test`: Run all tests
+- `just bench`: Run benchmarks
+- `just docs-build`: Build documentation locally (mdBook + cargo doc)
+- `just docs-serve`: Serve documentation locally on port 3000
 
 ## Commit Conventions
 
