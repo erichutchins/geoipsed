@@ -7,3 +7,4 @@ title = "geoipsed Documentation"
 [output.html]
 git-repository-url = "https://github.com/erichutchins/geoipsed"
 edit-url-template = "https://github.com/erichutchins/geoipsed/edit/main/docs/{path}"
+theme = "rust"
