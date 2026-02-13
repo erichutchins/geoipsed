@@ -54,7 +54,7 @@ struct Args {
     tag_files: bool,
 
     /// Extract IPs only without MMDB lookups or templating (fast path, implies --only-matching)
-    #[clap(short = 'j', long, conflicts_with_all = &["template", "tag", "tag_files", "provider", "include", "list_providers", "list_templates", "only_routable", "only_matching"])]
+    #[clap(short = 'j', long, conflicts_with_all = &["template", "tag", "tag_files", "provider", "list_providers", "list_templates", "only_routable", "only_matching"])]
     justips: bool,
 
     /// Include all types of IP addresses in matches
