@@ -3,6 +3,12 @@ name: Docs
 on:
   push:
     branches: ["main"]
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
   workflow_dispatch:
 
 permissions:
@@ -24,25 +30,30 @@ jobs:
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Cache mdBook
+        uses: actions/cache@v4
+        with:
+          path: bin/mdbook
+          key: mdbook-v0.4.40
+
       - name: Install mdBook
         run: |
           mkdir -p bin
-          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.40/mdbook-v0.4.40-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C bin
+          if [ ! -f bin/mdbook ]; then
+            curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.40/mdbook-v0.4.40-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C bin
+          fi
           echo "$(pwd)/bin" >> $GITHUB_PATH
 
-      - name: Build Docs
+      - name: Build API Docs
         run: |
-          # Build API docs
           cargo doc --workspace --no-deps --all-features
-          
-          # Prepare API docs for mdBook inclusion
           rm -rf docs/src/api
           mkdir -p docs/src/api
           cp -r target/doc/* docs/src/api/
           echo '<meta http-equiv="refresh" content="0; url=geoipsed/index.html">' > docs/src/api/index.html
-          
-          # Build mdBook (will include docs/src/api)
-          mdbook build docs
+
+      - name: Build mdBook
+        run: mdbook build docs
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -50,7 +61,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'docs/book'
+          path: "docs/book"
 
       - name: Deploy to GitHub Pages
         id: deployment
