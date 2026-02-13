@@ -3,14 +3,12 @@ name: Publish
 on:
   push:
     tags:
-      - "ip-extract-v*"
-      - "geoipsed-v*"
+      - "v*"
 
 jobs:
-  publish-ip-extract:
-    name: Publish ip-extract to crates.io
+  publish:
+    name: Publish to crates.io
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/ip-extract-v')
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -23,16 +21,6 @@ jobs:
 
       - name: Wait for crates.io to index
         run: sleep 30
-
-  publish-geoipsed:
-    name: Publish geoipsed to crates.io
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/geoipsed-v')
-    needs: [publish-ip-extract]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: Swatinem/rust-cache@v2
 
       - name: Publish geoipsed
         run: cargo publish
