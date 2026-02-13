@@ -1,15 +1,17 @@
+//! Simple IP extraction and tagging example.
+//!
+//! Run with:
+//!   cargo run --example simple_extraction
+
 use anyhow::Result;
 use ip_extract::{ExtractorBuilder, Tag, Tagged};
 use std::io::stdout;
 
 fn main() -> Result<()> {
     // 1. Configure and build the extractor.
-    // We'll include IPv4 and private IPs for this example.
-    let extractor = ExtractorBuilder::new()
-        .ipv4(true)
-        .ipv6(true)
-        .private_ips(true)
-        .build()?;
+    // By default, all IP types are included (IPv4, IPv6, private, loopback, broadcast).
+    // Use .ignore_*() methods to filter specific categories.
+    let extractor = ExtractorBuilder::new().build()?;
 
     // 2. Sample input bytes (e.g., from a log file).
     let input = b"Traffic from 10.0.0.5 to 8.8.8.8 and also 2001:4860:4860::8888";
