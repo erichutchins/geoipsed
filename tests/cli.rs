@@ -16,6 +16,7 @@ fn run_geoipsed(input: &str, args: &[&str]) -> Result<String> {
     // Add user arguments
     test_args.extend_from_slice(args);
 
+    #[allow(deprecated)]
     let mut cmd = Command::cargo_bin("geoipsed").unwrap();
     let output = cmd
         .env("GEOIP_MMDB_DIR", maxmind_dir.as_os_str())
