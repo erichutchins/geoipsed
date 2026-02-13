@@ -83,6 +83,8 @@ Typical throughput on modern hardware:
    - Validation only on candidates, not all scanned bytes
 
 3. **Strict Validation**
-   - Hand-optimized IPv4 parser (20-30% faster than `std::net`)
+   - Hand-optimized[^1] IPv4 parser (20-30% faster than `std::net`)
    - Boundary checking prevents false matches (e.g., `1.2.3.4.5` rejected)
    - Configurable filters for special ranges
+
+[^1]: AI wrote all of this. It does not have hands.
