@@ -6,6 +6,7 @@ use ripline::{
     lines::LineIter,
 };
 use rustc_hash::FxHashMap as HashMap;
+use std::hash::BuildHasherDefault;
 use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 use termcolor::{ColorChoice, StandardStream};
