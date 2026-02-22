@@ -202,7 +202,7 @@ impl MaxMindProvider {
             .and_then(|lookup| lookup.decode::<FastCity>().ok().flatten())
     }
 
-    /// Core template rendering logic shared by lookup() and lookup_and_write().
+    /// Core template rendering logic shared by `lookup()` and `lookup_and_write()`.
     /// Performs database lookups and writes formatted output to the provided writer.
     fn render_template(
         &self,
@@ -580,6 +580,7 @@ impl ProviderRegistry {
     }
 
     /// Get a list of available provider names
+    #[must_use]
     pub fn available_providers(&self) -> Vec<String> {
         self.providers.keys().cloned().collect()
     }
@@ -590,7 +591,7 @@ impl ProviderRegistry {
             self.active_provider = Some(name.to_string());
             Ok(())
         } else {
-            anyhow::bail!("Unknown provider: {}", name)
+            anyhow::bail!("Unknown provider: {name}")
         }
     }
 
@@ -602,7 +603,7 @@ impl ProviderRegistry {
             .ok_or_else(|| anyhow::anyhow!("No active provider set"))?;
         self.providers
             .remove(name)
-            .ok_or_else(|| anyhow::anyhow!("Active provider '{}' not found in registry", name))
+            .ok_or_else(|| anyhow::anyhow!("Active provider '{name}' not found in registry"))
     }
 
     /// Get the active provider
@@ -614,7 +615,7 @@ impl ProviderRegistry {
 
         self.providers
             .get(name)
-            .map(|p| p.as_ref())
+            .map(std::convert::AsRef::as_ref)
             .ok_or_else(|| anyhow::anyhow!("Active provider not found"))
     }
 
@@ -651,9 +652,7 @@ impl ProviderRegistry {
             return Err(anyhow::anyhow!("Active provider not found"));
         };
 
-        let path_to_use = path
-            .map(|p| PathBuf::from(p.as_str()))
-            .unwrap_or_else(|| default_path);
+        let path_to_use = path.map_or_else(|| default_path, |p| PathBuf::from(p.as_str()));
 
         self.with_active_provider_mut(|provider| provider.initialize(&path_to_use))
     }
@@ -669,6 +668,7 @@ impl ProviderRegistry {
     }
 
     /// Check if an IP has a valid ASN entry using the active provider
+    #[must_use]
     pub fn has_asn(&self, ip: IpAddr) -> bool {
         if let Ok(provider) = self.get_active_provider() {
             return provider.has_asn(ip);
@@ -683,35 +683,43 @@ impl ProviderRegistry {
     }
 
     /// Print information about database files for all providers
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any environment variable checking fails.
     pub fn print_db_info(&self) -> Result<String> {
+        use std::fmt::Write as _;
         let mut output = String::new();
 
         // Check environment variables
         let env_var_status = match std::env::var("GEOIP_MMDB_DIR") {
-            Ok(path) => format!("GEOIP_MMDB_DIR is set to: {}", path),
+            Ok(path) => format!("GEOIP_MMDB_DIR is set to: {path}"),
             Err(_) => match std::env::var("MAXMIND_MMDB_DIR") {
                 Ok(path) => format!(
-                    "MAXMIND_MMDB_DIR is set to: {} (deprecated, use GEOIP_MMDB_DIR instead)",
-                    path
+                    "MAXMIND_MMDB_DIR is set to: {path} (deprecated, use GEOIP_MMDB_DIR instead)",
                 ),
                 Err(_) => "No GEOIP_MMDB_DIR environment variable set".to_string(),
             },
         };
 
-        output.push_str(&format!("Environment Status:\n  {}\n\n", env_var_status));
-        output.push_str("Available MMDB Providers:\n\n");
+        let _ = writeln!(output, "Environment Status:");
+        let _ = writeln!(output, "  {env_var_status}");
+        let _ = writeln!(output);
+        let _ = writeln!(output, "Available MMDB Providers:");
+        let _ = writeln!(output);
 
         for (name, provider) in &self.providers {
-            output.push_str(&format!("Provider: {}\n", name));
-            output.push_str(&format!("  Name: {}\n", provider.name()));
-            output.push_str(&format!(
-                "  Default Path: {}\n",
+            let _ = writeln!(output, "Provider: {name}");
+            let _ = writeln!(output, "  Name: {}", provider.name());
+            let _ = writeln!(
+                output,
+                "  Default Path: {}",
                 provider.default_path().display()
-            ));
-            output.push_str("  Required Files:\n");
+            );
+            let _ = writeln!(output, "  Required Files:");
 
             for file in provider.required_files() {
-                output.push_str(&format!("    - {}\n", file));
+                let _ = writeln!(output, "    - {file}");
             }
 
             let default_path = provider.default_path();
@@ -722,16 +730,19 @@ impl ProviderRegistry {
 
             if files_exist {
                 // Green checkmark with ANSI color code
-                output.push_str(
-                    "  Status: \x1b[32m✓\x1b[0m Installed (files found at default location)\n",
+                let _ = writeln!(
+                    output,
+                    "  Status: \x1b[32m✓\x1b[0m Installed (files found at default location)"
                 );
             } else {
                 // Red X with ANSI color code
-                output
-                    .push_str("  Status: \x1b[31m✗\x1b[0m Not installed or custom path required\n");
+                let _ = writeln!(
+                    output,
+                    "  Status: \x1b[31m✗\x1b[0m Not installed or custom path required"
+                );
             }
 
-            output.push('\n');
+            let _ = writeln!(output);
         }
 
         Ok(output)

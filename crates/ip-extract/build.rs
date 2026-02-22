@@ -104,7 +104,7 @@ fn build_and_save(
         .build_many(patterns)?;
 
     let (bytes, _) = dfa.to_bytes_little_endian();
-    fs::write(out_dir.join(format!("{}.dfa", filename_base)), &bytes)?;
+    fs::write(out_dir.join(format!("{filename_base}.dfa")), &bytes)?;
 
     Ok(())
 }

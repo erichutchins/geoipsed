@@ -1,6 +1,6 @@
 [package]
 name = "ip-extract"
-version = "0.1.0"
+version = "0.1.1" #:version
 edition = "2021"
 authors = ["Eric Hutchins"]
 description = "High-performance IP address extraction and tagging engine"

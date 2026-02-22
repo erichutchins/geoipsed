@@ -17,16 +17,17 @@ pub enum FileOrStdin {
 impl fmt::Display for FileOrStdin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FileOrStdin::File(path) => write!(f, "{}", path),
+            FileOrStdin::File(path) => write!(f, "{path}"),
             FileOrStdin::Stdin => write!(f, "<stdin>"),
         }
     }
 }
 
 impl FileOrStdin {
-    /// Create a new FileOrStdin from a path.
+    /// Create a new `FileOrStdin` from a path.
     ///
     /// If the path is "-", stdin is used.
+    #[must_use]
     pub fn from_path(path: Utf8PathBuf) -> Self {
         if path.as_str() == "-" {
             FileOrStdin::Stdin
@@ -36,6 +37,7 @@ impl FileOrStdin {
     }
 
     /// Return a display string for the input source.
+    #[must_use]
     pub fn display(&self) -> String {
         match self {
             FileOrStdin::File(path) => path.to_string(),
@@ -48,7 +50,7 @@ impl FileOrStdin {
         match self {
             FileOrStdin::File(path) => {
                 let file =
-                    File::open(path).with_context(|| format!("failed to open file: {}", path))?;
+                    File::open(path).with_context(|| format!("failed to open file: {path}"))?;
                 Ok(InputReader::File(BufReader::new(file)))
             }
             FileOrStdin::Stdin => Ok(InputReader::Stdin(BufReader::new(io::stdin()))),

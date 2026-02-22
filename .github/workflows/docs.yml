@@ -25,24 +25,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Cache mdBook
-        uses: actions/cache@v4
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
         with:
-          path: bin/mdbook
-          key: mdbook-v0.4.40
-
-      - name: Install mdBook
-        run: |
-          mkdir -p bin
-          if [ ! -f bin/mdbook ]; then
-            curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.40/mdbook-v0.4.40-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C bin
-          fi
-          echo "$(pwd)/bin" >> $GITHUB_PATH
+          mdbook-version: 'latest'
 
       - name: Build API Docs
         run: |
@@ -56,10 +47,10 @@ jobs:
         run: mdbook build docs
 
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v5
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: "docs/book"
 

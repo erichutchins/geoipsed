@@ -41,6 +41,10 @@ impl Template {
     ///
     /// Field references are `{field_name}`. Use `{{` for a literal `{`.
     /// An unclosed `{` (no matching `}`) is treated as a literal.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TemplateError` if the template contains an empty field name (`{}`).
     pub fn compile(template: &str) -> Result<Template, TemplateError> {
         let mut parts = Vec::new();
         let mut literal = String::new();
@@ -122,6 +126,10 @@ impl Template {
     ///
     /// The closure receives the writer and a field name, and should write
     /// the corresponding value to the writer.
+    ///
+    /// # Errors
+    ///
+    /// Returns `std::io::Result` if writing to the provided writer fails.
     #[inline]
     pub fn write<W, L>(&self, wtr: &mut W, mut lookup: L) -> std::io::Result<()>
     where
@@ -139,21 +147,23 @@ impl Template {
         Ok(())
     }
 
-    /// Render the template with a HashMap of field values.
+    /// Render the template with a `HashMap` of field values.
     ///
     /// Unknown fields are replaced with an empty string.
     #[inline]
+    #[must_use]
     pub fn render_with_map(&self, values: &HashMap<String, String>) -> String {
-        self.render(move |name| values.get(name).map(|s| s.as_str()).unwrap_or(""))
+        self.render(move |name| values.get(name).map_or("", |s| s.as_str()))
     }
 
     /// Get the list of field names referenced in this template.
+    #[must_use]
     pub fn fields(&self) -> Vec<&str> {
         self.parts
             .iter()
             .filter_map(|part| match part {
                 TemplatePart::Field(name) => Some(name.as_str()),
-                _ => None,
+                TemplatePart::Literal(_) => None,
             })
             .collect()
     }
@@ -163,8 +173,8 @@ impl fmt::Display for Template {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for part in &self.parts {
             match part {
-                TemplatePart::Literal(s) => write!(f, "{}", s)?,
-                TemplatePart::Field(name) => write!(f, "{{{}}}", name)?,
+                TemplatePart::Literal(s) => write!(f, "{s}")?,
+                TemplatePart::Field(name) => write!(f, "{{{name}}}")?,
             }
         }
         Ok(())
