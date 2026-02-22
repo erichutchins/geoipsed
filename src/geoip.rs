@@ -37,7 +37,7 @@ impl GeoIPSed {
         };
 
         let template = Template::compile(&template_str)
-            .map_err(|e| anyhow::anyhow!("Invalid template: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid template: {e}"))?;
 
         Ok(Self {
             color,
@@ -69,7 +69,7 @@ impl GeoIPSed {
 
         // Compile the template once during initialization
         let template = Template::compile(&template_str)
-            .map_err(|e| anyhow::anyhow!("Invalid template: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid template: {e}"))?;
 
         Ok(Self {
             color,
@@ -79,6 +79,7 @@ impl GeoIPSed {
         })
     }
 
+    #[must_use]
     #[inline]
     pub fn lookup(&self, ip: IpAddr, s: &str) -> String {
         // Only proceed with routability check if needed

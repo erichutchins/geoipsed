@@ -19,8 +19,9 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
+      # Wait for crates.io to index ip-extract before publishing geoipsed which depends on it
       - name: Wait for crates.io to index
-        run: sleep 30
+        run: sleep 60
 
       - name: Publish geoipsed
         run: cargo publish

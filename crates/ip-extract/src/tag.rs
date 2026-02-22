@@ -31,6 +31,7 @@ impl Tag {
 
     /// Set the byte range [start, end) where this tag was found in the original text.
     #[inline]
+    #[must_use]
     pub fn with_range(mut self, range: Range<usize>) -> Self {
         self.range = Some(range);
         self
@@ -47,18 +48,21 @@ impl Tag {
 
     /// Get the IP address text.
     #[inline]
+    #[must_use]
     pub fn ip(&self) -> &str {
         &self.ip
     }
 
     /// Get the range of this tag in the original text, if available.
     #[inline]
+    #[must_use]
     pub fn range(&self) -> Option<&Range<usize>> {
         self.range.as_ref()
     }
 
     /// Get the decorated version of this IP, if available.
     #[inline]
+    #[must_use]
     pub fn decorated(&self) -> Option<&str> {
         self.decorated.as_deref()
     }
@@ -89,6 +93,7 @@ impl Tagged {
     ///
     /// This container holds the original text and will collect any `Tag`s found within it.
     #[inline]
+    #[must_use]
     pub fn new(text: &[u8]) -> Tagged {
         // Pre-allocate a reasonable capacity for tags based on text length
         let capacity = if text.len() > 1000 { 16 } else { 4 };
@@ -103,6 +108,7 @@ impl Tagged {
     ///
     /// The tag should contain a range that corresponds to its position in `self.text()`.
     #[inline]
+    #[must_use]
     pub fn tag(mut self, tag: Tag) -> Self {
         self.tags.push(tag);
         self
@@ -110,12 +116,14 @@ impl Tagged {
 
     /// Get the tags in this text.
     #[inline]
+    #[must_use]
     pub fn tags(&self) -> &[Tag] {
         &self.tags
     }
 
     /// Get the original text.
     #[inline]
+    #[must_use]
     pub fn text(&self) -> &[u8] {
         &self.text
     }

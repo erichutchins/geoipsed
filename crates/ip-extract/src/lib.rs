@@ -130,7 +130,7 @@ static DFA_BOTH: OnceLock<&'static DFA<&'static [u32]>> = OnceLock::new();
 /// # Safety
 ///
 /// - `copy_nonoverlapping`: Safe because bytes and storage don't overlap
-/// - `from_raw_parts`: Safe because storage_ref points to valid, initialized data
+/// - `from_raw_parts`: Safe because `storage_ref` points to valid, initialized data
 /// - `Box::leak`: Safe because DFA is never dropped (program lifetime)
 fn load_dfa(bytes: &'static [u8]) -> &'static DFA<&'static [u32]> {
     // Allocate u32 buffer sized to hold all bytes (rounded up)
@@ -257,9 +257,8 @@ impl Extractor {
             loop {
                 // We use the specialized try_search_fwd method.
                 // For a dense DFA, this is the core scanning loop.
-                let m = match self.dfa.try_search_fwd(&input) {
-                    Ok(Some(m)) => m,
-                    _ => return None,
+                let Ok(Some(m)) = self.dfa.try_search_fwd(&input) else {
+                    return None;
                 };
 
                 let end = m.offset();
@@ -401,6 +400,7 @@ impl ExtractorBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             include_ipv4: true,
@@ -585,6 +585,17 @@ impl ExtractorBuilder {
     }
 }
 
+/// Validate an IPv4 address from a byte slice, applying filters.
+///
+/// This function uses `parse_ipv4_bytes` for strict validation and then checks
+/// against the provided inclusion filters.
+///
+/// # Arguments
+///
+/// * `bytes` - Candidate byte slice to validate.
+/// * `include_private` - Whether to include RFC 1918 addresses.
+/// * `include_loopback` - Whether to include 127.0.0.0/8 addresses.
+/// * `include_broadcast` - Whether to include broadcast and link-local addresses.
 #[inline]
 fn validate_ipv4(
     bytes: &[u8],
@@ -592,10 +603,10 @@ fn validate_ipv4(
     include_loopback: bool,
     include_broadcast: bool,
 ) -> bool {
-    let ipv4 = match parse_ipv4_bytes(bytes) {
-        Some(ip) => ip,
-        None => return false,
+    let Some(ipv4) = parse_ipv4_bytes(bytes) else {
+        return false;
     };
+
     if !include_private && ipv4.is_private() {
         return false;
     }
@@ -633,6 +644,7 @@ fn validate_ipv4(
 /// assert_eq!(parse_ipv4_bytes(b"256.1.1.1"), None);  // Out of range
 /// assert_eq!(parse_ipv4_bytes(b"192.168.01.1"), None);  // Leading zero
 /// ```
+#[must_use]
 #[inline]
 pub fn parse_ipv4_bytes(bytes: &[u8]) -> Option<Ipv4Addr> {
     if bytes.len() < 7 || bytes.len() > 15 {
@@ -648,13 +660,16 @@ pub fn parse_ipv4_bytes(bytes: &[u8]) -> Option<Ipv4Addr> {
                 if digits_in_octet == 0 || octet_idx == 3 {
                     return None;
                 }
-                octets[octet_idx] = current_val as u8;
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    octets[octet_idx] = current_val as u8;
+                }
                 octet_idx += 1;
                 current_val = 0;
                 digits_in_octet = 0;
             }
             b'0'..=b'9' => {
-                let digit = (b - b'0') as u16;
+                let digit = u16::from(b - b'0');
                 if digits_in_octet > 0 && current_val == 0 {
                     return None;
                 }
@@ -670,7 +685,10 @@ pub fn parse_ipv4_bytes(bytes: &[u8]) -> Option<Ipv4Addr> {
     if octet_idx != 3 || digits_in_octet == 0 {
         return None;
     }
-    octets[3] = current_val as u8;
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        octets[3] = current_val as u8;
+    }
     Some(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
 }
 
@@ -681,16 +699,27 @@ fn is_unique_local(ip: &Ipv6Addr) -> bool {
     matches!(ip.octets()[0], 0xfc | 0xfd)
 }
 
+/// Validate an IPv6 address from a byte slice, applying filters.
+///
+/// This function performs parsing and category-based filtering. It uses
+/// `unsafe` `from_utf8_unchecked` for performance, as the candidates are
+/// already filtered by the DFA for IP-like characters.
+///
+/// # Arguments
+///
+/// * `bytes` - Candidate byte slice to validate.
+/// * `include_private` - Whether to include ULA and link-local addresses.
+/// * `include_loopback` - Whether to include the loopback address (`::1`).
 #[inline]
 fn validate_ipv6(bytes: &[u8], include_private: bool, include_loopback: bool) -> bool {
     if bytes.len() < 2 {
         return false;
     }
     let s = unsafe { std::str::from_utf8_unchecked(bytes) };
-    let ip = match s.parse::<IpAddr>() {
-        Ok(ip) => ip,
-        Err(_) => return false,
+    let Ok(ip) = s.parse::<IpAddr>() else {
+        return false;
     };
+
     match ip {
         IpAddr::V6(ipv6) => {
             if !include_private && (ipv6.is_unicast_link_local() || is_unique_local(&ipv6)) {
@@ -701,7 +730,7 @@ fn validate_ipv6(bytes: &[u8], include_private: bool, include_loopback: bool) ->
             }
             true
         }
-        _ => false,
+        IpAddr::V4(_) => false,
     }
 }
 

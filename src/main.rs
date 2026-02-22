@@ -15,7 +15,7 @@ use geoipsed::{files, geoip, input, mmdb, ExtractorBuilder, Tag, Tagged};
 use input::FileOrStdin;
 
 /// Check if the error chain contains a broken pipe error.
-#[inline(always)]
+#[inline]
 fn is_broken_pipe(err: &Error) -> bool {
     // Look for a broken pipe error in the error chain
     for cause in err.chain() {
@@ -127,9 +127,9 @@ fn main() -> ExitCode {
     if std::env::var("RUST_BACKTRACE").is_ok_and(|v| v == "1")
         && std::env::var("RUST_LIB_BACKTRACE").map_or(true, |v| v == "1")
     {
-        writeln!(&mut std::io::stderr(), "{:?}", err).unwrap();
+        writeln!(&mut std::io::stderr(), "{err:?}").unwrap();
     } else {
-        writeln!(&mut std::io::stderr(), "{:#}", err).unwrap();
+        writeln!(&mut std::io::stderr(), "{err:#}").unwrap();
     }
 
     ExitCode::FAILURE
@@ -144,7 +144,7 @@ fn run_main() -> Result<ExitCode> {
     // if user asks to list available providers
     if args.list_providers {
         let info = provider_registry.print_db_info()?;
-        println!("{}", info);
+        println!("{info}");
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -203,7 +203,6 @@ fn run_main() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-#[inline(always)]
 fn run(args: Args, colormode: ColorChoice) -> Result<()> {
     // Determine which IP types to include
     let include_private = args.all || !args.no_private;
@@ -232,7 +231,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
 
     // Fast path: just extract IPs without MMDB lookups
     if args.justips {
-        return run_justips(args, extractor);
+        return run_justips(args, &extractor);
     }
 
     // Initialize provider registry (only when needed)
@@ -260,7 +259,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
 
     // Use a larger initial capacity for cache to reduce rehashing
     let mut cache: HashMap<Vec<u8>, String> =
-        HashMap::with_capacity_and_hasher(4096, Default::default());
+        HashMap::with_capacity_and_hasher(4096, BuildHasherDefault::default());
     let only_matching = args.only_matching;
     let tag_mode = args.tag;
     let mut line_buffer = LineBufferBuilder::new().capacity(65536).build();
@@ -288,7 +287,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                                 let result = geoipdb.lookup(ip, ipstr);
                                 out.write_all(result.as_bytes())?;
                                 out.write_all(b"\n")?;
-                                if cache.len() < 100000 {
+                                if cache.len() < 100_000 {
                                     cache.insert(ip_bytes.to_vec(), result);
                                 }
                             } else {
@@ -322,7 +321,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                             if let Ok(ip) = ipstr.parse::<std::net::IpAddr>() {
                                 let result = geoipdb.lookup(ip, ipstr);
                                 out.write_all(result.as_bytes())?;
-                                if cache.len() < 100000 {
+                                if cache.len() < 100_000 {
                                     cache.insert(ip_bytes.to_vec(), result);
                                 }
                             } else {
@@ -344,8 +343,8 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
 
 /// Fast path for extracting IPs without MMDB lookups or templating
 /// Always outputs just IPs, one per line
-#[inline(always)]
-fn run_justips(args: Args, extractor: geoipsed::Extractor) -> Result<()> {
+#[inline]
+fn run_justips(args: Args, extractor: &geoipsed::Extractor) -> Result<()> {
     let mut out = io::BufWriter::with_capacity(65536, io::stdout());
     let mut line_buffer = LineBufferBuilder::new().capacity(65536).build();
 
