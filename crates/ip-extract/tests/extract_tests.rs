@@ -1113,7 +1113,10 @@ fn test_extract_parsed_returns_ipaddr() {
     let ips = extract_parsed(b"Connect to 2001:db8::1").unwrap();
     assert_eq!(ips.len(), 1);
     assert!(ips[0].is_ipv6());
-    assert_eq!(ips[0], IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)));
+    assert_eq!(
+        ips[0],
+        IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))
+    );
 
     // Mixed IPv4 and IPv6
     let ips = extract_parsed(b"from 10.0.0.1 to ::1").unwrap();
