@@ -176,7 +176,7 @@ impl ValidatorType {
 /// scanning with minimal overhead. See the crate-level documentation for throughput benchmarks.
 pub struct Extractor {
     dfa: &'static DFA<&'static [u32]>,
-    validators: Vec<ValidatorType>,
+    validators: [ValidatorType; 2],
 }
 
 impl Extractor {
@@ -491,36 +491,22 @@ impl ExtractorBuilder {
     /// # }
     /// ```
     pub fn build(&self) -> anyhow::Result<Extractor> {
+        let ipv4 = ValidatorType::IPv4 {
+            include_private: self.include_private,
+            include_loopback: self.include_loopback,
+            include_broadcast: self.include_broadcast,
+        };
+        let ipv6 = ValidatorType::IPv6 {
+            include_private: self.include_private,
+            include_loopback: self.include_loopback,
+        };
+        // Pattern IDs assigned by build_many order: 0 = IPv4, 1 = IPv6.
+        // validators[pid] must stay in sync with build.rs build_many(&[IPV4_PATTERN, IPV6_PATTERN]).
         let (dfa, validators) = match (self.include_ipv4, self.include_ipv6) {
-            (true, true) => (
-                get_both_dfa(),
-                vec![
-                    ValidatorType::IPv4 {
-                        include_private: self.include_private,
-                        include_loopback: self.include_loopback,
-                        include_broadcast: self.include_broadcast,
-                    },
-                    ValidatorType::IPv6 {
-                        include_private: self.include_private,
-                        include_loopback: self.include_loopback,
-                    },
-                ],
-            ),
-            (true, false) => (
-                get_ipv4_dfa(),
-                vec![ValidatorType::IPv4 {
-                    include_private: self.include_private,
-                    include_loopback: self.include_loopback,
-                    include_broadcast: self.include_broadcast,
-                }],
-            ),
-            (false, true) => (
-                get_ipv6_dfa(),
-                vec![ValidatorType::IPv6 {
-                    include_private: self.include_private,
-                    include_loopback: self.include_loopback,
-                }],
-            ),
+            (true, true) => (get_both_dfa(), [ipv4, ipv6]),
+            (true, false) => (get_ipv4_dfa(), [ipv4, ipv6]),
+            // ipv6_only DFA has a single pattern: pid=0 maps to IPv6
+            (false, true) => (get_ipv6_dfa(), [ipv6, ipv4]),
             _ => anyhow::bail!("No IP address patterns selected"),
         };
         Ok(Extractor { dfa, validators })
