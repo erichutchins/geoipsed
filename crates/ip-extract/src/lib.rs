@@ -265,63 +265,45 @@ impl Extractor {
                 let pid = m.pattern().as_usize();
                 let validator = &self.validators[pid];
 
-                // Backtrack to find the start. Max IPv6 is 39 bytes, use 40 for safety margin.
-                let mut start_scan = end.saturating_sub(40);
-                while start_scan < end && !is_ip_char(haystack[start_scan]) {
-                    start_scan += 1;
-                }
-
-                let mut actual_start = None;
-                for s in start_scan..end {
-                    if s > 0 && is_ip_char(haystack[s - 1]) {
-                        continue;
-                    }
-
-                    if validator.validate(&haystack[s..end]) {
-                        // Right boundary check: ensure the IP isn't part of a longer sequence
-                        // For IPv4: allow trailing dots (sentence endings) but reject digits
-                        // For IPv6: reject digits, hex letters, dots, or colons
-                        let valid_boundary = if end < haystack.len() {
-                            let next_char = haystack[end];
-                            match validator {
-                                ValidatorType::IPv4 { .. } => {
-                                    // Reject digits immediately after (e.g., "1.2.3.4" followed by "5")
-                                    // Reject dot+digit combination (e.g., "1.2.3.4.5")
-                                    if next_char.is_ascii_digit() {
-                                        false
-                                    } else if next_char == b'.' && end + 1 < haystack.len() {
-                                        // If next is a dot, check if it's followed by a digit
-                                        !haystack[end + 1].is_ascii_digit()
-                                    } else {
-                                        true
-                                    }
-                                }
-                                ValidatorType::IPv6 { .. } => {
-                                    // Reject all IP characters for IPv6
-                                    !is_ip_char(next_char)
-                                }
-                            }
-                        } else {
-                            true
-                        };
-
-                        if !valid_boundary {
-                            break;
-                        }
-                        actual_start = Some(s..end);
-                        break;
-                    }
-                }
-
-                // Advance input.
+                // Advance for next iteration regardless of whether this match is valid.
                 input.set_start(end);
 
-                if let Some(range) = actual_start {
-                    return Some(range);
+                // Walk backward from end to find the true start of the IP.
+                // We know IPs are at most 39 bytes (IPv6 max), so cap the scan.
+                // Stop as soon as we hit a non-IP character or the beginning of the buffer.
+                let floor = end.saturating_sub(40);
+                let start = (floor..end)
+                    .rev()
+                    .find(|&i| i == 0 || !is_ip_char(haystack[i - 1]))
+                    .unwrap_or(floor);
+
+                // Left boundary: the character before start must not be an IP char.
+                // (The rev().find() above guarantees this by construction.)
+
+                // Right boundary check: character after end must not continue the IP.
+                let valid_right_boundary = match end.cmp(&haystack.len()) {
+                    std::cmp::Ordering::Less => {
+                        let next = haystack[end];
+                        match validator {
+                            ValidatorType::IPv4 { .. } => {
+                                !(next.is_ascii_digit()
+                                    || next == b'.'
+                                        && end + 1 < haystack.len()
+                                        && haystack[end + 1].is_ascii_digit())
+                            }
+                            ValidatorType::IPv6 { .. } => !is_ip_char(next),
+                        }
+                    }
+                    _ => true,
+                };
+
+                if !valid_right_boundary {
+                    continue;
                 }
 
-                if end >= haystack.len() {
-                    return None;
+                // Single validate call — no loop, no multiple attempts.
+                if validator.validate(&haystack[start..end]) {
+                    return Some(start..end);
                 }
             }
         })
@@ -619,6 +601,152 @@ fn validate_ipv4(
     true
 }
 
+/// Extract all IPv4 and IPv6 addresses from input, returning them as strings.
+///
+/// This is a convenience function that uses default settings (all IP types included).
+/// For more control, use `ExtractorBuilder` and `Extractor::find_iter()`.
+///
+/// # Errors
+///
+/// Returns an error if the builder fails to initialize (e.g., no IP types selected).
+///
+/// # Example
+///
+/// ```no_run
+/// use ip_extract::extract;
+///
+/// # fn main() -> anyhow::Result<()> {
+/// let ips = extract(b"Server at 192.168.1.1 and 2001:db8::1")?;
+/// assert_eq!(ips, vec!["192.168.1.1", "2001:db8::1"]);
+/// # Ok(())
+/// # }
+/// ```
+pub fn extract(haystack: &[u8]) -> anyhow::Result<Vec<String>> {
+    let extractor = ExtractorBuilder::new().build()?;
+    Ok(extractor
+        .find_iter(haystack)
+        .map(|range| String::from_utf8_lossy(&haystack[range]).to_string())
+        .collect())
+}
+
+/// Extract unique IPv4 and IPv6 addresses from input, returning them as strings.
+///
+/// Maintains order of first observation (not lexicographic order).
+/// This is a convenience function that uses default settings (all IP types included).
+/// For more control, use `ExtractorBuilder` and `Extractor::find_iter()`.
+///
+/// # Errors
+///
+/// Returns an error if the builder fails to initialize (e.g., no IP types selected).
+///
+/// # Example
+///
+/// ```no_run
+/// use ip_extract::extract_unique;
+///
+/// # fn main() -> anyhow::Result<()> {
+/// let ips = extract_unique(b"Server at 192.168.1.1, another at 192.168.1.1")?;
+/// assert_eq!(ips, vec!["192.168.1.1"]);
+/// # Ok(())
+/// # }
+/// ```
+pub fn extract_unique(haystack: &[u8]) -> anyhow::Result<Vec<String>> {
+    use std::collections::HashSet;
+
+    let extractor = ExtractorBuilder::new().build()?;
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+
+    for range in extractor.find_iter(haystack) {
+        let ip_str = String::from_utf8_lossy(&haystack[range]).to_string();
+        if seen.insert(ip_str.clone()) {
+            result.push(ip_str);
+        }
+    }
+
+    Ok(result)
+}
+
+/// Extract all IPv4 and IPv6 addresses from input, returning them as parsed `IpAddr` objects.
+///
+/// This is a convenience function that uses default settings (all IP types included).
+/// For more control, use `ExtractorBuilder` and `Extractor::find_iter()`.
+///
+/// # Errors
+///
+/// Returns an error if the builder fails to initialize (e.g., no IP types selected),
+/// or if an extracted address cannot be parsed (should not happen in practice).
+///
+/// # Example
+///
+/// ```no_run
+/// use ip_extract::extract_parsed;
+///
+/// # fn main() -> anyhow::Result<()> {
+/// let ips = extract_parsed(b"Server at 192.168.1.1 and 2001:db8::1")?;
+/// assert_eq!(ips.len(), 2);
+/// assert!(ips[0].is_ipv4());
+/// assert!(ips[1].is_ipv6());
+/// # Ok(())
+/// # }
+/// ```
+pub fn extract_parsed(haystack: &[u8]) -> anyhow::Result<Vec<IpAddr>> {
+    let extractor = ExtractorBuilder::new().build()?;
+    extractor
+        .find_iter(haystack)
+        .map(|range| {
+            let s = std::str::from_utf8(&haystack[range])
+                .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in IP: {e}"))?;
+            s.parse::<IpAddr>()
+                .map_err(|e| anyhow::anyhow!("Failed to parse IP '{s}': {e}"))
+        })
+        .collect()
+}
+
+/// Extract unique IPv4 and IPv6 addresses from input, returning them as parsed `IpAddr` objects.
+///
+/// Maintains order of first observation (not lexicographic order).
+/// This is a convenience function that uses default settings (all IP types included).
+/// For more control, use `ExtractorBuilder` and `Extractor::find_iter()`.
+///
+/// # Errors
+///
+/// Returns an error if the builder fails to initialize (e.g., no IP types selected),
+/// or if an extracted address cannot be parsed (should not happen in practice).
+///
+/// # Example
+///
+/// ```no_run
+/// use ip_extract::extract_unique_parsed;
+///
+/// # fn main() -> anyhow::Result<()> {
+/// let ips = extract_unique_parsed(b"Server at 192.168.1.1, another at 192.168.1.1")?;
+/// assert_eq!(ips.len(), 1);
+/// assert!(ips[0].is_ipv4());
+/// # Ok(())
+/// # }
+/// ```
+pub fn extract_unique_parsed(haystack: &[u8]) -> anyhow::Result<Vec<IpAddr>> {
+    use std::collections::HashSet;
+
+    let extractor = ExtractorBuilder::new().build()?;
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+
+    for range in extractor.find_iter(haystack) {
+        let s = std::str::from_utf8(&haystack[range])
+            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in IP: {e}"))?;
+        let addr = s
+            .parse::<IpAddr>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse IP '{s}': {e}"))?;
+        if seen.insert(addr) {
+            result.push(addr);
+        }
+    }
+
+    Ok(result)
+}
+
 /// Parse an IPv4 address from a byte slice.
 ///
 /// Performs strict validation of dotted-quad notation (e.g., `192.168.1.1`).
@@ -626,14 +754,6 @@ fn validate_ipv4(
 /// - Octet values > 255
 /// - Leading zeros (e.g., `192.168.001.1`)
 /// - Invalid formats
-///
-/// # Arguments
-///
-/// * `bytes` - A byte slice containing a potential IPv4 address (7-15 bytes)
-///
-/// # Returns
-///
-/// `Some(Ipv4Addr)` if the bytes represent a valid IPv4 address, `None` otherwise.
 ///
 /// # Example
 ///
