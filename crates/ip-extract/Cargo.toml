@@ -26,7 +26,6 @@ features = [
     "std",
     "syntax",
     "perf",
-    "unicode",
     "meta",
     "nfa",
     "dfa-onepass",
@@ -36,10 +35,10 @@ features = [
 ]
 
 [build-dependencies]
-regex-automata = { version = "0.4.9", features = ["std", "syntax", "dfa-build", "dfa-search"] }
+regex-automata = { version = "0.4.9", features = ["std", "syntax", "dfa-build", "dfa-search", "nfa-thompson"] }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 rand = "0.8"
 
 [[bench]]

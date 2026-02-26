@@ -3,6 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use regex_automata::dfa::dense::DFA;
+use regex_automata::nfa::thompson;
 use regex_automata::MatchKind;
 
 /// IPv4 address pattern: matches a complete dotted-quad notation.
@@ -14,7 +15,7 @@ use regex_automata::MatchKind;
 ///
 /// The pattern matches anywhere in text; boundary validation is done in lib.rs.
 /// Note: regex-automata doesn't support lookahead/lookbehind, so right boundary
-/// checking happens in the backtracking algorithm (see is_ip_char in lib.rs).
+/// checking happens in the backtracking algorithm (see `is_ip_char` in lib.rs).
 static IPV4_PATTERN: &str = r"(?x)
   (?:
     (?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)  # First octet
@@ -96,6 +97,7 @@ fn build_and_save(
     out_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let dfa = DFA::builder()
+        .thompson(thompson::Config::new().shrink(true))
         .configure(
             DFA::config()
                 .match_kind(MatchKind::LeftmostFirst)

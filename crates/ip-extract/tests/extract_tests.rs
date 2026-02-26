@@ -641,3 +641,518 @@ fn test_ipv6_scope_id_boundary() {
     assert_eq!(&input3[ranges3[0].clone()], b"fe80::cafe");
     assert_eq!(&input3[ranges3[1].clone()], b"10.0.0.1");
 }
+
+// ============================================================================
+// AGGRESSIVE ADVERSARIAL TESTS - Backtracking and boundary stress
+// ============================================================================
+
+#[test]
+fn test_adversarial_aggressive_backtracking() {
+    use ip_extract::parse_ipv4_bytes;
+
+    // Many valid-looking octets that exceed 255 when combined
+    assert!(parse_ipv4_bytes(b"999.999.999.999").is_none()); // All > 255
+    assert!(parse_ipv4_bytes(b"299.299.299.299").is_none()); // All > 255
+
+    // Mixed - some octets valid, one invalid
+    assert!(parse_ipv4_bytes(b"192.168.999.1").is_none()); // Third octet > 255
+    assert!(parse_ipv4_bytes(b"192.999.1.1").is_none()); // Second octet > 255
+
+    // The "9.9.9.9.9..." pattern - DFA might find "9.9.9.9" but extraction
+    // context could cause issues if backtracking tries multiple start positions
+    assert!(parse_ipv4_bytes(b"9.9.9.9.9").is_none()); // 5 octets
+    assert!(parse_ipv4_bytes(b"9.9.9.9.9.9").is_none()); // 6 octets
+
+    // Valid: exactly 4 octets
+    assert!(parse_ipv4_bytes(b"9.9.9.9").is_some());
+}
+
+#[test]
+fn test_adversarial_extraction_repeating_pattern() {
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // String with repeating valid octet followed by more octets
+    // The right boundary check rejects "9.9.9.9" when followed by ".9" (would make 5th octet)
+    // So it skips to find "1.1.1.1" which has a valid boundary (space after)
+    let haystack = b"9.9.9.9.9.9.9.9 then 1.1.1.1";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    // The repeating pattern has invalid right boundary (dot followed by digit)
+    // so only "1.1.1.1" is extracted (valid boundary with space after)
+    assert_eq!(actual, vec!["1.1.1.1"]);
+}
+
+#[test]
+fn test_adversarial_max_value_boundaries() {
+    use ip_extract::parse_ipv4_bytes;
+
+    // Test all combinations of "just over 255"
+    assert!(parse_ipv4_bytes(b"256.0.0.0").is_none());
+    assert!(parse_ipv4_bytes(b"0.256.0.0").is_none());
+    assert!(parse_ipv4_bytes(b"0.0.256.0").is_none());
+    assert!(parse_ipv4_bytes(b"0.0.0.256").is_none());
+
+    // Test "one below and at boundary"
+    assert!(parse_ipv4_bytes(b"254.254.254.254").is_some());
+    assert!(parse_ipv4_bytes(b"255.255.255.255").is_some());
+
+    // Test mixed valid/invalid that could trick a greedy parser
+    assert!(parse_ipv4_bytes(b"255.254.253.256").is_none()); // Last octet over
+    assert!(parse_ipv4_bytes(b"256.254.253.252").is_none()); // First octet over
+}
+
+#[test]
+fn test_adversarial_prefix_suffix_collisions() {
+    // Tests that validator doesn't accidentally accept partial matches
+    use ip_extract::parse_ipv4_bytes;
+
+    // "25" prefix could match "25[0-5]" pattern but "256" doesn't
+    assert!(parse_ipv4_bytes(b"256.256.256.256").is_none());
+
+    // "2" prefix valid, but "299" not
+    assert!(parse_ipv4_bytes(b"299.299.299.299").is_none());
+
+    // Edge case: "250-255" vs "260-299"
+    assert!(parse_ipv4_bytes(b"250.250.250.250").is_some());
+    assert!(parse_ipv4_bytes(b"260.260.260.260").is_none());
+}
+
+#[test]
+fn test_adversarial_extraction_long_sequence() {
+    // Test extraction from very long repeating digit sequence
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // 9.9.9.9.9.9.9.9.9... - many dots and valid octets
+    // The right boundary check sees ".9" after "9.9.9.9" and rejects it as incomplete (5+ octet form)
+    let haystack = b"9.9.9.9.9.9.9.9.9.9.9.9.9.9.9.9.9";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    // Since every 4-octet boundary is followed by ".digit", all matches are rejected as incomplete
+    // The right boundary check prevents this sequence from matching
+    assert_eq!(actual.len(), 0);
+}
+
+#[test]
+fn test_adversarial_boundary_256_variants() {
+    use ip_extract::parse_ipv4_bytes;
+
+    // Ensure 256 in any position fails
+    let test_cases = vec![
+        (b"256.0.0.0", 0),
+        (b"0.256.0.0", 1),
+        (b"0.0.256.0", 2),
+        (b"0.0.0.256", 3),
+    ];
+
+    for (ip_bytes, pos) in test_cases {
+        assert!(
+            parse_ipv4_bytes(ip_bytes).is_none(),
+            "Failed for position {}",
+            pos
+        );
+    }
+
+    // Ensure 255 in all positions succeeds
+    assert!(parse_ipv4_bytes(b"255.255.255.255").is_some());
+}
+
+#[test]
+fn test_adversarial_extraction_octet_overflow_context() {
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // IPs with overflow values surrounded by valid context
+    let haystack = b"Start: 1.1.1.1, Invalid: 256.256.256.256, End: 8.8.8.8";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    // Should extract only the two valid IPs
+    assert_eq!(actual, vec!["1.1.1.1", "8.8.8.8"]);
+}
+
+#[test]
+fn test_adversarial_extraction_multiple_overflow_patterns() {
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    let haystack = b"999.999.999.999 and 8.8.8.8 and 300.300.300.300 and 1.1.1.1";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    // Only valid IPs should be extracted
+    assert_eq!(actual, vec!["8.8.8.8", "1.1.1.1"]);
+}
+
+#[test]
+fn test_adversarial_extraction_dot_density() {
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // High dot density: tests that parser handles many potential boundaries
+    let haystack = b"1.2.3.4.5.6.7.8.9";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    // Right boundary check sees ".5" after "1.2.3.4" and rejects it as incomplete (5+ octets)
+    // So "1.2.3.4" is not extracted. This is correct behavior - we want complete IPs only.
+    assert_eq!(actual.len(), 0);
+}
+
+#[test]
+fn test_adversarial_leading_zeros_aggressive() {
+    use ip_extract::parse_ipv4_bytes;
+
+    // Leading zeros on boundary values should fail
+    assert!(parse_ipv4_bytes(b"0255.0.0.0").is_none());
+    assert!(parse_ipv4_bytes(b"0256.0.0.0").is_none());
+    assert!(parse_ipv4_bytes(b"0199.0.0.0").is_none());
+    assert!(parse_ipv4_bytes(b"0100.0.0.0").is_none());
+    assert!(parse_ipv4_bytes(b"099.0.0.0").is_none());
+    assert!(parse_ipv4_bytes(b"010.0.0.0").is_none());
+
+    // Without leading zeros, these should work
+    assert!(parse_ipv4_bytes(b"255.0.0.0").is_some());
+    assert!(parse_ipv4_bytes(b"199.0.0.0").is_some());
+    assert!(parse_ipv4_bytes(b"100.0.0.0").is_some());
+    assert!(parse_ipv4_bytes(b"99.0.0.0").is_some());
+    assert!(parse_ipv4_bytes(b"10.0.0.0").is_some());
+}
+
+#[test]
+fn test_adversarial_extraction_leading_zeros_with_overflow() {
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // Mix of leading zeros and overflow - both should be rejected
+    let haystack = b"Valid: 192.168.1.1, LeadingZero: 192.168.01.1, Overflow: 192.168.256.1";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    // Only the first valid IP
+    assert_eq!(actual, vec!["192.168.1.1"]);
+}
+
+#[test]
+fn test_adversarial_extraction_all_positions_overflow() {
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // Test overflow in each octet position separately
+    let cases = vec![
+        (b"256.1.1.1" as &[u8], "first octet overflow"),
+        (b"1.256.1.1", "second octet overflow"),
+        (b"1.1.256.1", "third octet overflow"),
+        (b"1.1.1.256", "fourth octet overflow"),
+    ];
+
+    for (haystack, _description) in cases {
+        let actual: Vec<String> = extractor
+            .find_iter(haystack)
+            .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+            .collect();
+
+        // All should extract nothing
+        assert_eq!(actual.len(), 0);
+    }
+}
+
+#[test]
+fn test_adversarial_digit_accumulation() {
+    use ip_extract::parse_ipv4_bytes;
+
+    // Test that parser correctly accumulates digits and validates < 256
+    // "25" alone is valid, "255" is valid, "256" is not
+    assert!(parse_ipv4_bytes(b"25.1.1.1").is_some());
+    assert!(parse_ipv4_bytes(b"255.1.1.1").is_some());
+    assert!(parse_ipv4_bytes(b"256.1.1.1").is_none());
+
+    // "2" alone is valid, "20" is valid, "200" is valid, "2000" is not (and length check)
+    assert!(parse_ipv4_bytes(b"2.1.1.1").is_some());
+    assert!(parse_ipv4_bytes(b"20.1.1.1").is_some());
+    assert!(parse_ipv4_bytes(b"200.1.1.1").is_some());
+    assert!(parse_ipv4_bytes(b"2000.1.1.1").is_none()); // Also fails length check
+}
+
+#[test]
+fn test_adversarial_sequential_boundary_crossing() {
+    use ip_extract::parse_ipv4_bytes;
+
+    // Test crossing boundaries: 99->100, 199->200, 249->250, 255->256
+    assert!(parse_ipv4_bytes(b"99.99.99.99").is_some());
+    assert!(parse_ipv4_bytes(b"100.100.100.100").is_some());
+    assert!(parse_ipv4_bytes(b"199.199.199.199").is_some());
+    assert!(parse_ipv4_bytes(b"200.200.200.200").is_some());
+    assert!(parse_ipv4_bytes(b"249.249.249.249").is_some());
+    assert!(parse_ipv4_bytes(b"250.250.250.250").is_some());
+    assert!(parse_ipv4_bytes(b"255.255.255.255").is_some());
+    assert!(parse_ipv4_bytes(b"256.256.256.256").is_none());
+}
+
+#[test]
+fn test_adversarial_lookback_boundary_40_chars() {
+    // The lookback floor is 40 chars: end.saturating_sub(40)
+    // This tests what happens with long strings of IP characters
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // Exactly 40 chars of dots and 1s: repeating pattern "1.1.1.1..."
+    let haystack40 = b"1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1";
+    let actual40: Vec<String> = extractor
+        .find_iter(haystack40)
+        .map(|r| String::from_utf8_lossy(&haystack40[r]).to_string())
+        .collect();
+
+    // All attempts to extract hit the right boundary check (followed by ".1")
+    // So nothing should be extracted
+    assert_eq!(
+        actual40.len(),
+        0,
+        "40-char all-IP-chars string should extract nothing (all have invalid boundaries)"
+    );
+}
+
+#[test]
+fn test_adversarial_lookback_boundary_50_chars() {
+    // Test with 50 chars of IP characters - lookback floor would be position 10
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // 50 chars of dots and digits: enough to force lookback to floor
+    let haystack50 = b"1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1";
+    let actual50: Vec<String> = extractor
+        .find_iter(haystack50)
+        .map(|r| String::from_utf8_lossy(&haystack50[r]).to_string())
+        .collect();
+
+    // Same reason - every 4-octet match is followed by ".digit" which is invalid boundary
+    assert_eq!(
+        actual50.len(),
+        0,
+        "50-char all-IP-chars string should extract nothing (all have invalid boundaries)"
+    );
+}
+
+#[test]
+fn test_adversarial_lookback_boundary_exceeds_40() {
+    // Test what happens when we exceed 40 chars and the lookback floor kicks in
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .build()
+        .unwrap();
+
+    // Create a pattern where the lookback hits the floor (position 0)
+    // If haystack is 100 chars, and match is at position 100, floor = 60
+    // But if all 100 chars are IP chars, lookback scans from 60->100, finds no boundary
+    // and uses floor=60 as start position
+    let haystack = b"1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.\
+                     1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.\
+                     1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    // With all IP chars and right boundary checks, should extract nothing
+    assert_eq!(actual.len(), 0);
+}
+
+#[test]
+fn test_adversarial_lookback_boundary_with_valid_endpoint() {
+    // Test: what if we have 50 chars of IP chars, BUT a valid boundary at the end?
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // 50 chars of "1.1.1.1..." followed by a space (valid boundary)
+    let haystack = b"1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1 end";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    // Now we have a valid right boundary (space), but the lookback will search
+    // through all 50 chars of IP chars to find the start, hitting the floor.
+    // The substring from floor->end won't be a valid IP, so it fails validation
+    // and the loop continues. Since we've advanced past the end, no more matches.
+    assert_eq!(
+        actual.len(),
+        0,
+        "Even with valid boundary, 50 chars of IP chars hits floor and fails validation"
+    );
+}
+
+#[test]
+fn test_adversarial_lookback_floor_within_valid_ip() {
+    // Specific test: create a scenario where the lookback floor lands within IP chars
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // Pattern: "X" + 40 IP chars + "8.8.8.8" at end
+    // When DFA matches "8.8.8.8" at position 88 (end of haystack):
+    // floor = 88 - 40 = 48
+    // Lookback scans from 48->88 for a non-IP char
+    // haystack[48..88] is all IP chars (from the "1.1.1.1..." sequence and "8.8.8.8")
+    // So we hit floor, start = 48
+    // Then validate haystack[48..88] which is "1.1.1.1.1.1.1.1.8.8.8.8"
+    // This substring fails validation (too many octets), so loop continues
+    let haystack =
+        b"X1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.8.8.8.8";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    // Due to the 40-char lookback limit and how the validation works,
+    // "8.8.8.8" won't be extracted because the lookback hits the floor
+    // and the combined substring fails validation
+    assert_eq!(
+        actual.len(),
+        0,
+        "Long IP char sequence before target IP prevents extraction due to lookback floor"
+    );
+}
+
+#[test]
+fn test_adversarial_lookback_valid_extraction_with_boundary() {
+    // Test where we DO get a valid extraction with a clear boundary before lookback limit
+    let extractor = ExtractorBuilder::new().ipv4(true).build().unwrap();
+
+    // Create clear boundary: non-IP char + valid IP
+    // Space (non-IP char) + "1.1.1.1" - this should extract cleanly
+    let haystack = b" 1.1.1.1";
+    let actual: Vec<String> = extractor
+        .find_iter(haystack)
+        .map(|r| String::from_utf8_lossy(&haystack[r]).to_string())
+        .collect();
+
+    assert_eq!(actual, vec!["1.1.1.1"]);
+}
+
+// ============================================================================
+// CONVENIENCE FUNCTION TESTS
+// ============================================================================
+
+#[test]
+fn test_extract_convenience_function() {
+    use ip_extract::extract;
+
+    // Basic extraction
+    let ips = extract(b"Server at 192.168.1.1 and 2001:db8::1").unwrap();
+    assert_eq!(ips, vec!["192.168.1.1", "2001:db8::1"]);
+
+    // Multiple of same IP
+    let ips = extract(b"1.1.1.1 and 1.1.1.1 again").unwrap();
+    assert_eq!(ips, vec!["1.1.1.1", "1.1.1.1"]);
+
+    // Empty result
+    let ips = extract(b"no ips here").unwrap();
+    assert!(ips.is_empty());
+
+    // Mixed content
+    let ips = extract(b"Connect from 10.0.0.1 to 192.168.1.1, via 8.8.8.8").unwrap();
+    assert_eq!(ips, vec!["10.0.0.1", "192.168.1.1", "8.8.8.8"]);
+}
+
+#[test]
+fn test_extract_unique_convenience_function() {
+    use ip_extract::extract_unique;
+
+    // Deduplication
+    let ips = extract_unique(b"1.1.1.1 and 1.1.1.1 again").unwrap();
+    assert_eq!(ips, vec!["1.1.1.1"]);
+
+    // Order of first observation (not sorted)
+    let ips = extract_unique(b"8.8.8.8 then 1.1.1.1 then 1.1.1.1 then 8.8.8.8").unwrap();
+    assert_eq!(ips, vec!["8.8.8.8", "1.1.1.1"]);
+
+    // Mixed IPv4 and IPv6
+    let ips = extract_unique(b"2001:db8::1, 192.168.1.1, 2001:db8::1").unwrap();
+    assert_eq!(ips, vec!["2001:db8::1", "192.168.1.1"]);
+
+    // Empty result
+    let ips = extract_unique(b"no ips here").unwrap();
+    assert!(ips.is_empty());
+
+    // Multiple IPs, all unique
+    let ips = extract_unique(b"1.1.1.1, 2.2.2.2, 3.3.3.3").unwrap();
+    assert_eq!(ips, vec!["1.1.1.1", "2.2.2.2", "3.3.3.3"]);
+}
+
+#[test]
+fn test_extract_unique_order_preservation() {
+    use ip_extract::extract_unique;
+
+    // Verify order is preserved, not lexicographically sorted
+    let input = b"9.9.9.9, 1.1.1.1, 5.5.5.5, 3.3.3.3";
+    let ips = extract_unique(input).unwrap();
+
+    // Should be in observation order, not sorted
+    assert_eq!(ips, vec!["9.9.9.9", "1.1.1.1", "5.5.5.5", "3.3.3.3"]);
+
+    // Verify it's not sorted (this would fail if we were sorting)
+    assert_ne!(ips, vec!["1.1.1.1", "3.3.3.3", "5.5.5.5", "9.9.9.9"]);
+}
+
+#[test]
+fn test_extract_parsed_returns_ipaddr() {
+    use ip_extract::extract_parsed;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    // IPv4 addresses are returned as IpAddr::V4
+    let ips = extract_parsed(b"Server at 192.168.1.1 and 8.8.8.8").unwrap();
+    assert_eq!(ips.len(), 2);
+    assert_eq!(ips[0], IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
+    assert_eq!(ips[1], IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
+
+    // IPv6 addresses are returned as IpAddr::V6
+    let ips = extract_parsed(b"Connect to 2001:db8::1").unwrap();
+    assert_eq!(ips.len(), 1);
+    assert!(ips[0].is_ipv6());
+    assert_eq!(ips[0], IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)));
+
+    // Mixed IPv4 and IPv6
+    let ips = extract_parsed(b"from 10.0.0.1 to ::1").unwrap();
+    assert_eq!(ips.len(), 2);
+    assert!(ips[0].is_ipv4());
+    assert!(ips[1].is_ipv6());
+
+    // Duplicates are NOT removed
+    let ips = extract_parsed(b"1.1.1.1 and 1.1.1.1").unwrap();
+    assert_eq!(ips.len(), 2);
+
+    // Empty input
+    let ips = extract_parsed(b"no ips here").unwrap();
+    assert!(ips.is_empty());
+}
+
+#[test]
+fn test_extract_unique_parsed_returns_unique_ipaddr() {
+    use ip_extract::extract_unique_parsed;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    // Deduplication by value
+    let ips = extract_unique_parsed(b"1.1.1.1 and 1.1.1.1 again").unwrap();
+    assert_eq!(ips.len(), 1);
+    assert_eq!(ips[0], IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)));
+
+    // Order of first observation is preserved
+    let ips = extract_unique_parsed(b"8.8.8.8 then 1.1.1.1 then 8.8.8.8").unwrap();
+    assert_eq!(ips.len(), 2);
+    assert_eq!(ips[0], IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
+    assert_eq!(ips[1], IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)));
+
+    // Mixed IPv4 and IPv6 deduplication
+    let ips = extract_unique_parsed(b"2001:db8::1, 192.168.1.1, 2001:db8::1").unwrap();
+    assert_eq!(ips.len(), 2);
+    assert!(ips[0].is_ipv6());
+    assert!(ips[1].is_ipv4());
+
+    // All unique
+    let ips = extract_unique_parsed(b"1.1.1.1 2.2.2.2 3.3.3.3").unwrap();
+    assert_eq!(ips.len(), 3);
+}
