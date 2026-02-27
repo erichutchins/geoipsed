@@ -228,6 +228,14 @@ impl ValidatorType {
             } => validate_ipv6(bytes, include_private, include_loopback),
         }
     }
+
+    #[inline(always)]
+    fn kind(&self) -> IpKind {
+        match self {
+            ValidatorType::IPv4 { .. } => IpKind::V4,
+            ValidatorType::IPv6 { .. } => IpKind::V6,
+        }
+    }
 }
 
 /// The main IP address extractor.
