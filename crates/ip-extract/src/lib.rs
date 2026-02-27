@@ -83,6 +83,7 @@
 //!
 //! See `benches/ip_benchmark.rs` for details.
 
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -93,6 +94,78 @@ use regex_automata::Input;
 
 mod tag;
 pub use tag::{Tag, Tagged, TextData};
+
+/// Whether a validated IP match is IPv4 or IPv6.
+///
+/// Known at zero cost from the DFA pattern ID — no parsing required.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpKind {
+    V4,
+    V6,
+}
+
+/// A validated IP address match within a haystack.
+///
+/// Provides zero-copy access to the matched bytes and their position within
+/// the original haystack, plus the IP version. Parsing to [`IpAddr`] is
+/// available via [`ip()`][IpMatch::ip] but not cached — callers who look up
+/// the same IP repeatedly should cache at a higher level.
+#[derive(Debug, Clone)]
+pub struct IpMatch<'a> {
+    bytes: &'a [u8],
+    range: Range<usize>,
+    kind: IpKind,
+}
+
+impl<'a> IpMatch<'a> {
+    /// The matched IP address as a byte slice.
+    ///
+    /// Zero-copy: this is a slice directly into the haystack.
+    #[inline]
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// The matched IP address as a string slice.
+    ///
+    /// This is safe without UTF-8 validation because IP address characters
+    /// (`[0-9a-fA-F.:]`) are a strict subset of ASCII.
+    #[inline]
+    pub fn as_str(&self) -> &'a str {
+        // SAFETY: IP addresses consist only of ASCII characters.
+        unsafe { std::str::from_utf8_unchecked(self.bytes) }
+    }
+
+    /// The byte range of this match within the original haystack.
+    #[inline]
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    /// Whether this match is IPv4 or IPv6.
+    #[inline]
+    pub fn kind(&self) -> IpKind {
+        self.kind
+    }
+
+    /// Parse the matched bytes into an [`IpAddr`].
+    ///
+    /// Uses the known [`IpKind`] to avoid trial-and-error parsing. Not cached —
+    /// callers who process the same IP multiple times should cache externally
+    /// (e.g., with a `HashMap<&[u8], String>`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the bytes are not a valid IP address. This should never happen
+    /// in practice because matches are produced by the DFA + validator.
+    pub fn ip(&self) -> IpAddr {
+        let s = self.as_str();
+        match self.kind {
+            IpKind::V4 => IpAddr::V4(s.parse::<Ipv4Addr>().expect("validated by DFA")),
+            IpKind::V6 => IpAddr::V6(s.parse::<Ipv6Addr>().expect("validated by DFA")),
+        }
+    }
+}
 
 // Alignment wrapper: guarantees u32 alignment for DFA deserialization.
 // DFA::from_bytes() requires the byte slice to be u32-aligned; include_bytes!() only

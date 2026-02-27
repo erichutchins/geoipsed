@@ -1,4 +1,4 @@
-use ip_extract::ExtractorBuilder;
+use ip_extract::{ExtractorBuilder, IpKind, IpMatch};
 
 /// Simplified test harness to verify IP extraction.
 fn check_extraction(
@@ -1158,4 +1158,13 @@ fn test_extract_unique_parsed_returns_unique_ipaddr() {
     // All unique
     let ips = extract_unique_parsed(b"1.1.1.1 2.2.2.2 3.3.3.3").unwrap();
     assert_eq!(ips.len(), 3);
+}
+
+#[test]
+fn test_ip_match_as_bytes() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"ip: 192.168.1.1 done";
+    let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].as_bytes(), b"192.168.1.1");
 }
