@@ -89,9 +89,7 @@ fn bench_extract_ipv4(c: &mut Criterion) {
     });
 
     group.bench_function("match_iter", |b| {
-        b.iter(|| {
-            extractor.match_iter(black_box(&data)).count()
-        });
+        b.iter(|| extractor.match_iter(black_box(&data)).count());
     });
 
     group.finish();
@@ -119,9 +117,7 @@ fn bench_extract_ipv6(c: &mut Criterion) {
     });
 
     group.bench_function("match_iter", |b| {
-        b.iter(|| {
-            extractor.match_iter(black_box(&data)).count()
-        });
+        b.iter(|| extractor.match_iter(black_box(&data)).count());
     });
 
     group.finish();
@@ -150,9 +146,7 @@ fn bench_extract_mixed(c: &mut Criterion) {
     });
 
     group.bench_function("match_iter", |b| {
-        b.iter(|| {
-            extractor.match_iter(black_box(&data)).count()
-        });
+        b.iter(|| extractor.match_iter(black_box(&data)).count());
     });
 
     group.finish();
