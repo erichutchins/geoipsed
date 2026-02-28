@@ -1,5 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use geoipsed::{ExtractorBuilder, Tag, Tagged};
+use std::hint::black_box;
 use std::io::Write;
 use std::ops::Range;
 
