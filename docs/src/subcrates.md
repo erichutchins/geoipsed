@@ -8,3 +8,10 @@ The core engine for finding and validating IP addresses in strings. It uses a co
 
 - [User Guide](ip-extract.md)
 - [API Reference](api/ip_extract/index.html)
+
+## ipextract (Python)
+
+A Python package wrapping `ip-extract` via PyO3/maturin. Install with `pip install ipextract`.
+
+- [User Guide](python.md)
+- [PyPI](https://pypi.org/project/ipextract/)
