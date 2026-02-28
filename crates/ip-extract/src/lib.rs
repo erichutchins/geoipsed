@@ -83,6 +83,7 @@
 //!
 //! See `benches/ip_benchmark.rs` for details.
 
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -367,6 +368,64 @@ impl Extractor {
                 }
             }
         })
+    }
+
+    /// Scan `haystack` for IP addresses, writing non-IP text to `wtr` and
+    /// calling `replacer` for each match.
+    ///
+    /// This is the efficient single-pass decoration primitive: the caller
+    /// never needs to track byte offsets or manage gap writes. The replacer
+    /// writes the substitution directly to `wtr` — no intermediate allocation.
+    ///
+    /// Returns the number of IP addresses found.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first `io::Error` from either a gap write or the replacer.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ip_extract::ExtractorBuilder;
+    /// use std::io::Write;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// let extractor = ExtractorBuilder::new().build()?;
+    /// let data = b"Server 192.168.1.1 is up";
+    /// let mut out = Vec::new();
+    ///
+    /// let count = extractor.replace_iter(data, &mut out, |m, w| {
+    ///     write!(w, "[{}]", m.as_str())
+    /// })?;
+    ///
+    /// assert_eq!(count, 1);
+    /// assert_eq!(out, b"Server [192.168.1.1] is up");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn replace_iter<W, F>(
+        &self,
+        haystack: &[u8],
+        wtr: &mut W,
+        mut replacer: F,
+    ) -> io::Result<usize>
+    where
+        W: io::Write,
+        F: FnMut(&IpMatch, &mut W) -> io::Result<()>,
+    {
+        let mut last = 0;
+        let mut count = 0;
+
+        for m in self.match_iter(haystack) {
+            let range = m.range();
+            wtr.write_all(&haystack[last..range.start])?;
+            replacer(&m, wtr)?;
+            last = range.end;
+            count += 1;
+        }
+
+        wtr.write_all(&haystack[last..])?;
+        Ok(count)
     }
 }
 
