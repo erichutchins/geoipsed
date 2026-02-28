@@ -26,3 +26,8 @@ Repository = "https://github.com/erichutchins/geoipsed"
 python-source = "python"
 module-name = "ipextract._ipextract"
 features = ["pyo3/extension-module"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
