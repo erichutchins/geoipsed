@@ -262,8 +262,11 @@ pub struct Extractor {
 impl Extractor {
     /// Find all IP addresses in a byte slice.
     ///
-    /// Returns an iterator of byte ranges `[start, end)` pointing to each IP address found.
-    /// Ranges are guaranteed to be valid indices into `haystack`.
+    /// Returns an iterator of byte ranges `[start, end)` pointing to each IP
+    /// address found. Ranges are guaranteed to be valid indices into `haystack`.
+    ///
+    /// For richer match information (IP version, direct string access), use
+    /// [`match_iter`][Extractor::match_iter] instead.
     ///
     /// # Example
     ///
@@ -272,81 +275,21 @@ impl Extractor {
     ///
     /// # fn main() -> anyhow::Result<()> {
     /// let extractor = ExtractorBuilder::new().build()?;
-    /// let data = b"Log: 192.168.1.1 sent request to 8.8.8.8";
+    /// let data = b"Connecting from 192.168.1.1";
     ///
     /// for range in extractor.find_iter(data) {
-    ///     let ip = std::str::from_utf8(&data[range]).unwrap();
-    ///     println!("IP: {}", ip);
+    ///     let ip = std::str::from_utf8(&data[range])?;
+    ///     println!("Found: {ip}");
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `haystack` - A byte slice to search for IP addresses.
-    ///
-    /// # Returns
-    ///
-    /// An iterator yielding byte ranges for each valid IP address found.
     #[inline]
-    pub fn find_iter<'a>(&'a self, haystack: &'a [u8]) -> impl Iterator<Item = Range<usize>> + 'a {
-        let mut input = Input::new(haystack);
-
-        std::iter::from_fn(move || {
-            loop {
-                // We use the specialized try_search_fwd method.
-                // For a dense DFA, this is the core scanning loop.
-                let Ok(Some(m)) = self.dfa.try_search_fwd(&input) else {
-                    return None;
-                };
-
-                let end = m.offset();
-                let pid = m.pattern().as_usize();
-                let validator = &self.validators[pid];
-
-                // Advance for next iteration regardless of whether this match is valid.
-                input.set_start(end);
-
-                // Walk backward from end to find the true start of the IP.
-                // We know IPs are at most 39 bytes (IPv6 max), so cap the scan.
-                // Stop as soon as we hit a non-IP character or the beginning of the buffer.
-                let floor = end.saturating_sub(40);
-                let start = (floor..end)
-                    .rev()
-                    .find(|&i| i == 0 || !is_ip_char(haystack[i - 1]))
-                    .unwrap_or(floor);
-
-                // Left boundary: the character before start must not be an IP char.
-                // (The rev().find() above guarantees this by construction.)
-
-                // Right boundary check: character after end must not continue the IP.
-                let valid_right_boundary = match end.cmp(&haystack.len()) {
-                    std::cmp::Ordering::Less => {
-                        let next = haystack[end];
-                        match validator {
-                            ValidatorType::IPv4 { .. } => {
-                                !(next.is_ascii_digit()
-                                    || next == b'.'
-                                        && end + 1 < haystack.len()
-                                        && haystack[end + 1].is_ascii_digit())
-                            }
-                            ValidatorType::IPv6 { .. } => !is_ip_char(next),
-                        }
-                    }
-                    _ => true,
-                };
-
-                if !valid_right_boundary {
-                    continue;
-                }
-
-                // Single validate call — no loop, no multiple attempts.
-                if validator.validate(&haystack[start..end]) {
-                    return Some(start..end);
-                }
-            }
-        })
+    pub fn find_iter<'a>(
+        &'a self,
+        haystack: &'a [u8],
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
+        self.match_iter(haystack).map(|m| m.range())
     }
 
     /// Find all IP addresses in a byte slice, yielding rich [`IpMatch`] values.
