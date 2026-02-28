@@ -286,10 +286,7 @@ impl Extractor {
     /// # }
     /// ```
     #[inline]
-    pub fn find_iter<'a>(
-        &'a self,
-        haystack: &'a [u8],
-    ) -> impl Iterator<Item = Range<usize>> + 'a {
+    pub fn find_iter<'a>(&'a self, haystack: &'a [u8]) -> impl Iterator<Item = Range<usize>> + 'a {
         self.match_iter(haystack).map(|m| m.range())
     }
 
@@ -315,57 +312,52 @@ impl Extractor {
     /// # }
     /// ```
     #[inline]
-    pub fn match_iter<'a>(
-        &'a self,
-        haystack: &'a [u8],
-    ) -> impl Iterator<Item = IpMatch<'a>> + 'a {
+    pub fn match_iter<'a>(&'a self, haystack: &'a [u8]) -> impl Iterator<Item = IpMatch<'a>> + 'a {
         let mut input = Input::new(haystack);
 
-        std::iter::from_fn(move || {
-            loop {
-                let Ok(Some(m)) = self.dfa.try_search_fwd(&input) else {
-                    return None;
-                };
+        std::iter::from_fn(move || loop {
+            let Ok(Some(m)) = self.dfa.try_search_fwd(&input) else {
+                return None;
+            };
 
-                let end = m.offset();
-                let pid = m.pattern().as_usize();
-                let validator = &self.validators[pid];
+            let end = m.offset();
+            let pid = m.pattern().as_usize();
+            let validator = &self.validators[pid];
 
-                input.set_start(end);
+            input.set_start(end);
 
-                let floor = end.saturating_sub(40);
-                let start = (floor..end)
-                    .rev()
-                    .find(|&i| i == 0 || !is_ip_char(haystack[i - 1]))
-                    .unwrap_or(floor);
+            let floor = end.saturating_sub(40);
+            let start = (floor..end)
+                .rev()
+                .find(|&i| i == 0 || !is_ip_char(haystack[i - 1]))
+                .unwrap_or(floor);
 
-                let valid_right_boundary = match end.cmp(&haystack.len()) {
-                    std::cmp::Ordering::Less => {
-                        let next = haystack[end];
-                        match validator {
-                            ValidatorType::IPv4 { .. } => {
-                                !(next.is_ascii_digit()
-                                    || next == b'.'
-                                        && end + 1 < haystack.len()
-                                        && haystack[end + 1].is_ascii_digit())
-                            }
-                            ValidatorType::IPv6 { .. } => !is_ip_char(next),
+            let valid_right_boundary = match end.cmp(&haystack.len()) {
+                std::cmp::Ordering::Less => {
+                    let next = haystack[end];
+                    match validator {
+                        ValidatorType::IPv4 { .. } => {
+                            !(next.is_ascii_digit()
+                                || next == b'.'
+                                    && end + 1 < haystack.len()
+                                    && haystack[end + 1].is_ascii_digit())
                         }
+                        ValidatorType::IPv6 { .. } => !is_ip_char(next),
                     }
-                    _ => true,
-                };
-
-                if !valid_right_boundary {
-                    continue;
                 }
+                _ => true,
+            };
 
-                if validator.validate(&haystack[start..end]) {
-                    return Some(IpMatch {
-                        bytes: &haystack[start..end],
-                        range: start..end,
-                        kind: validator.kind(),
-                    });
-                }
+            if !valid_right_boundary {
+                continue;
+            }
+
+            if validator.validate(&haystack[start..end]) {
+                return Some(IpMatch {
+                    bytes: &haystack[start..end],
+                    range: start..end,
+                    kind: validator.kind(),
+                });
             }
         })
     }
