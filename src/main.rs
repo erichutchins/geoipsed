@@ -12,7 +12,7 @@ use std::process::ExitCode;
 use termcolor::{ColorChoice, StandardStream};
 
 // Use modules from the library instead of redefining them
-use geoipsed::{files, geoip, input, mmdb, ExtractorBuilder, Tag, Tagged};
+use geoipsed::{files, geoip, input, mmdb, ExtractorBuilder, IpMatch, Tag, Tagged};
 use input::FileOrStdin;
 
 /// Check if the error chain contains a broken pipe error.
@@ -276,62 +276,42 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
 
             for line in lines {
                 if only_matching {
-                    for range in extractor.find_iter(line) {
-                        let ip_bytes = &line[range.clone()];
-
-                        if let Some(cached) = cache.get(ip_bytes) {
+                    for m in extractor.match_iter(line) {
+                        if let Some(cached) = cache.get(m.as_bytes()) {
                             out.write_all(cached.as_bytes())?;
                             out.write_all(b"\n")?;
                         } else {
-                            let ipstr = std::str::from_utf8(ip_bytes).unwrap_or("decode error");
-                            if let Ok(ip) = ipstr.parse::<std::net::IpAddr>() {
-                                let result = geoipdb.lookup(ip, ipstr);
-                                out.write_all(result.as_bytes())?;
-                                out.write_all(b"\n")?;
-                                if cache.len() < 100_000 {
-                                    cache.insert(ip_bytes.to_vec(), result);
-                                }
-                            } else {
-                                out.write_all(ipstr.as_bytes())?;
-                                out.write_all(b"\n")?;
+                            let result = geoipdb.lookup(m.ip(), m.as_str());
+                            out.write_all(result.as_bytes())?;
+                            out.write_all(b"\n")?;
+                            if cache.len() < 100_000 {
+                                cache.insert(m.as_bytes().to_vec(), result);
                             }
                         }
                     }
                 } else if tag_mode {
                     let mut tagged = Tagged::new(line);
-                    for range in extractor.find_iter(line) {
-                        let ipstr =
-                            std::str::from_utf8(&line[range.clone()]).unwrap_or("decode error");
+                    for m in extractor.match_iter(line) {
                         tagged = tagged.tag(
-                            Tag::new(ipstr.to_owned())
-                                .with_range(range)
+                            Tag::new(m.as_str().to_owned())
+                                .with_range(m.range())
                                 .with_decoration(String::new()),
                         );
                     }
                     tagged.write_json(&mut out)?;
                 } else {
-                    let mut last_pos = 0;
-                    for range in extractor.find_iter(line) {
-                        out.write_all(&line[last_pos..range.start])?;
-                        let ip_bytes = &line[range.clone()];
-
-                        if let Some(cached) = cache.get(ip_bytes) {
-                            out.write_all(cached.as_bytes())?;
+                    extractor.replace_iter(line, &mut out, |m: &IpMatch, w| {
+                        if let Some(cached) = cache.get(m.as_bytes()) {
+                            w.write_all(cached.as_bytes())
                         } else {
-                            let ipstr = std::str::from_utf8(ip_bytes).unwrap_or("decode error");
-                            if let Ok(ip) = ipstr.parse::<std::net::IpAddr>() {
-                                let result = geoipdb.lookup(ip, ipstr);
-                                out.write_all(result.as_bytes())?;
-                                if cache.len() < 100_000 {
-                                    cache.insert(ip_bytes.to_vec(), result);
-                                }
-                            } else {
-                                out.write_all(ipstr.as_bytes())?;
+                            let result = geoipdb.lookup(m.ip(), m.as_str());
+                            w.write_all(result.as_bytes())?;
+                            if cache.len() < 100_000 {
+                                cache.insert(m.as_bytes().to_vec(), result);
                             }
+                            Ok(())
                         }
-                        last_pos = range.end;
-                    }
-                    out.write_all(&line[last_pos..])?;
+                    })?;
                 }
             }
             lb_reader.consume_all();
@@ -360,8 +340,8 @@ fn run_justips(args: Args, extractor: &geoipsed::Extractor) -> Result<()> {
 
             for line in lines {
                 // Always output just IPs, one per line
-                for range in extractor.find_iter(line) {
-                    out.write_all(&line[range])?;
+                for m in extractor.match_iter(line) {
+                    out.write_all(m.as_bytes())?;
                     out.write_all(b"\n")?;
                 }
             }
