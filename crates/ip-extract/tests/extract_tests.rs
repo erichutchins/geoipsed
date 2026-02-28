@@ -1,4 +1,6 @@
 use ip_extract::{ExtractorBuilder, IpKind, IpMatch};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::ops::Range;
 
 /// Simplified test harness to verify IP extraction.
 fn check_extraction(
@@ -1167,4 +1169,107 @@ fn test_ip_match_as_bytes() {
     let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].as_bytes(), b"192.168.1.1");
+}
+
+#[test]
+fn test_ip_match_as_str() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"connect to 2001:db8::1 now";
+    let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].as_str(), "2001:db8::1");
+}
+
+#[test]
+fn test_ip_match_kind_v4() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"server 8.8.8.8 online";
+    let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].kind(), IpKind::V4);
+}
+
+#[test]
+fn test_ip_match_kind_v6() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"server 2001:db8::1 online";
+    let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].kind(), IpKind::V6);
+}
+
+#[test]
+fn test_ip_match_kind_mixed() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"from 10.0.0.1 to 2001:db8::1";
+    let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].kind(), IpKind::V4);
+    assert_eq!(matches[1].kind(), IpKind::V6);
+}
+
+#[test]
+fn test_ip_match_ip_parse_v4() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"ip: 192.168.1.1";
+    let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
+    assert_eq!(matches[0].ip(), IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)));
+}
+
+#[test]
+fn test_ip_match_ip_parse_v6() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"ip: 2001:db8::1";
+    let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
+    assert_eq!(
+        matches[0].ip(),
+        IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1))
+    );
+}
+
+#[test]
+fn test_ip_match_range() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"ip: 10.0.0.1 end";
+    let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
+    assert_eq!(matches[0].range(), 4..12);
+    assert_eq!(&haystack[matches[0].range()], b"10.0.0.1");
+}
+
+#[test]
+fn test_match_iter_ranges_equal_find_iter() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"from 10.0.0.1 to 2001:db8::1 via 8.8.8.8";
+    let find_ranges: Vec<Range<usize>> = extractor.find_iter(haystack).collect();
+    let match_ranges: Vec<Range<usize>> =
+        extractor.match_iter(haystack).map(|m| m.range()).collect();
+    assert_eq!(find_ranges, match_ranges);
+}
+
+#[test]
+fn test_match_iter_empty_haystack() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let matches: Vec<IpMatch> = extractor.match_iter(b"").collect();
+    assert!(matches.is_empty());
+}
+
+#[test]
+fn test_match_iter_no_ips() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let matches: Vec<IpMatch> = extractor.match_iter(b"hello world no ips here").collect();
+    assert!(matches.is_empty());
+}
+
+#[test]
+fn test_match_iter_ipv4_only_no_v6() {
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(false)
+        .build()
+        .unwrap();
+    let haystack = b"v4: 10.0.0.1, v6: 2001:db8::1";
+    let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].kind(), IpKind::V4);
+    assert_eq!(matches[0].as_str(), "10.0.0.1");
 }
