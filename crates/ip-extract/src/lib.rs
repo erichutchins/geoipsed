@@ -83,7 +83,6 @@
 //!
 //! See `benches/ip_benchmark.rs` for details.
 
-use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -345,6 +344,83 @@ impl Extractor {
                 // Single validate call — no loop, no multiple attempts.
                 if validator.validate(&haystack[start..end]) {
                     return Some(start..end);
+                }
+            }
+        })
+    }
+
+    /// Find all IP addresses in a byte slice, yielding rich [`IpMatch`] values.
+    ///
+    /// Like [`find_iter`][Extractor::find_iter], but each match carries the
+    /// matched bytes, their position in the haystack, and the IP version —
+    /// eliminating the need to re-parse or guess the version at the call site.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use ip_extract::ExtractorBuilder;
+    ///
+    /// # fn main() -> anyhow::Result<()> {
+    /// let extractor = ExtractorBuilder::new().build()?;
+    /// let data = b"Log: 192.168.1.1 sent request to 2001:db8::1";
+    ///
+    /// for m in extractor.match_iter(data) {
+    ///     println!("{} ({:?})", m.as_str(), m.kind());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn match_iter<'a>(
+        &'a self,
+        haystack: &'a [u8],
+    ) -> impl Iterator<Item = IpMatch<'a>> + 'a {
+        let mut input = Input::new(haystack);
+
+        std::iter::from_fn(move || {
+            loop {
+                let Ok(Some(m)) = self.dfa.try_search_fwd(&input) else {
+                    return None;
+                };
+
+                let end = m.offset();
+                let pid = m.pattern().as_usize();
+                let validator = &self.validators[pid];
+
+                input.set_start(end);
+
+                let floor = end.saturating_sub(40);
+                let start = (floor..end)
+                    .rev()
+                    .find(|&i| i == 0 || !is_ip_char(haystack[i - 1]))
+                    .unwrap_or(floor);
+
+                let valid_right_boundary = match end.cmp(&haystack.len()) {
+                    std::cmp::Ordering::Less => {
+                        let next = haystack[end];
+                        match validator {
+                            ValidatorType::IPv4 { .. } => {
+                                !(next.is_ascii_digit()
+                                    || next == b'.'
+                                        && end + 1 < haystack.len()
+                                        && haystack[end + 1].is_ascii_digit())
+                            }
+                            ValidatorType::IPv6 { .. } => !is_ip_char(next),
+                        }
+                    }
+                    _ => true,
+                };
+
+                if !valid_right_boundary {
+                    continue;
+                }
+
+                if validator.validate(&haystack[start..end]) {
+                    return Some(IpMatch {
+                        bytes: &haystack[start..end],
+                        range: start..end,
+                        kind: validator.kind(),
+                    });
                 }
             }
         })
