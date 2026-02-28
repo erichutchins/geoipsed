@@ -20,8 +20,8 @@ ips = ipextract.extract("Connection from 192.168.1.1 and 8.8.8.8")
 # ["192.168.1.1", "8.8.8.8"]
 
 # Deduplicate, preserving first-seen order
-ips = ipextract.extract_unique("1.1.1.1 8.8.8.8 1.1.1.1")
-# ["1.1.1.1", "8.8.8.8"]
+ips = ipextract.extract_unique("8.8.8.8 1.1.1.1 8.8.8.8")
+# ["8.8.8.8", "1.1.1.1"]
 
 # bytes input works too (useful when reading log files directly)
 ips = ipextract.extract(b"host 10.0.0.1 connected")
@@ -66,17 +66,17 @@ ipv4_only = base.ipv6(False)  # new object, base unchanged
 
 ### Filter reference
 
-| Method | Effect |
-|--------|--------|
-| `.only_public()` | Exclude private, loopback, and broadcast |
-| `.ignore_private()` | Exclude RFC 1918 (IPv4) and ULA/link-local (IPv6) |
-| `.ignore_loopback()` | Exclude 127.0.0.0/8 and ::1 |
-| `.ignore_broadcast()` | Exclude 255.255.255.255 and link-local ranges |
-| `.ipv4(False)` | Skip IPv4 entirely |
-| `.ipv6(False)` | Skip IPv6 entirely |
-| `.private_ips(bool)` | Enable/disable private IPs |
-| `.loopback_ips(bool)` | Enable/disable loopback IPs |
-| `.broadcast_ips(bool)` | Enable/disable broadcast IPs |
+| Method                 | Effect                                            |
+| ---------------------- | ------------------------------------------------- |
+| `.only_public()`       | Exclude private, loopback, and broadcast          |
+| `.ignore_private()`    | Exclude RFC 1918 (IPv4) and ULA/link-local (IPv6) |
+| `.ignore_loopback()`   | Exclude 127.0.0.0/8 and ::1                       |
+| `.ignore_broadcast()`  | Exclude 255.255.255.255 and link-local ranges     |
+| `.ipv4(False)`         | Skip IPv4 entirely                                |
+| `.ipv6(False)`         | Skip IPv6 entirely                                |
+| `.private_ips(bool)`   | Enable/disable private IPs                        |
+| `.loopback_ips(bool)`  | Enable/disable loopback IPs                       |
+| `.broadcast_ips(bool)` | Enable/disable broadcast IPs                      |
 
 ## Extraction Methods
 
