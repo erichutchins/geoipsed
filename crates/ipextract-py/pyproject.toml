@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ipextract"
+version = "0.1.0"
+description = "High-performance IP address extraction from text, powered by Rust"
+authors = [{ name = "Eric Hutchins" }]
+license = { text = "Unlicense OR MIT" }
+requires-python = ">=3.10"
+keywords = ["ip", "extraction", "networking", "log-analysis", "security"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Text Processing",
+    "Topic :: System :: Networking",
+    "Intended Audience :: Developers",
+]
+
+[project.urls]
+Homepage = "https://github.com/erichutchins/geoipsed"
+Repository = "https://github.com/erichutchins/geoipsed"
+
+[tool.maturin]
+python-source = "python"
+module-name = "ipextract._ipextract"
+features = ["pyo3/extension-module"]

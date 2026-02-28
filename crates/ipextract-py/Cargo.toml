@@ -1,0 +1,16 @@
+[package]
+name = "ipextract-py"
+version = "0.1.0"
+edition = "2021"
+authors = ["Eric Hutchins"]
+description = "Python bindings for ip-extract: high-performance IP address extraction"
+license = "Unlicense OR MIT"
+repository = "https://github.com/erichutchins/geoipsed"
+
+[lib]
+name = "_ipextract"
+crate-type = ["cdylib"]
+
+[dependencies]
+ip-extract = { path = "../ip-extract" }
+pyo3 = { version = "0.22", features = ["abi3-py310"] }

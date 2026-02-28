@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/ip-extract",
+    "crates/ipextract-py",
 ]
 resolver = "2"
 
@@ -60,7 +61,7 @@ ripline = "0.1.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "benchmarks"
