@@ -1,7 +1,8 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use ip_extract::{parse_ipv4_bytes, ExtractorBuilder};
 use rand::Rng;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::io::Write;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 // Helper function to generate a random IPv4 address
 fn random_ipv4() -> String {
@@ -175,5 +176,175 @@ fn bench_ipv4_parser_vs_stdlib(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_extraction, bench_ipv4_parser_vs_stdlib);
+/// Compare `match_iter` and `find_iter` on identical inputs.
+///
+/// `match_iter` wraps each result in `IpMatch` (bytes + range + kind) — this
+/// measures whether that wrapper has any throughput cost vs bare `Range<usize>`.
+fn bench_match_iter_vs_find_iter(c: &mut Criterion) {
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .build()
+        .unwrap();
+
+    let mut group = c.benchmark_group("match_iter_vs_find_iter");
+
+    let dense_input = generate_dense_ips(1000);
+    group.throughput(Throughput::Bytes(dense_input.len() as u64));
+
+    group.bench_with_input(
+        BenchmarkId::new("find_iter", dense_input.len()),
+        &dense_input,
+        |b, input| {
+            b.iter(|| extractor.find_iter(input).count());
+        },
+    );
+
+    group.bench_with_input(
+        BenchmarkId::new("match_iter", dense_input.len()),
+        &dense_input,
+        |b, input| {
+            b.iter(|| extractor.match_iter(input).count());
+        },
+    );
+
+    let log_input = generate_log_data(1000, 100);
+    group.throughput(Throughput::Bytes(log_input.len() as u64));
+
+    group.bench_with_input(
+        BenchmarkId::new("find_iter_logs", log_input.len()),
+        &log_input,
+        |b, input| {
+            b.iter(|| extractor.find_iter(input).count());
+        },
+    );
+
+    group.bench_with_input(
+        BenchmarkId::new("match_iter_logs", log_input.len()),
+        &log_input,
+        |b, input| {
+            b.iter(|| extractor.match_iter(input).count());
+        },
+    );
+
+    group.finish();
+}
+
+/// Benchmark `replace_iter` for single-pass in-place decoration.
+///
+/// Simulates the geoipsed decoration path: scan line, write gaps unchanged,
+/// write a substitution for each IP. Measures the full round-trip including
+/// output writes, using a `Vec<u8>` sink to isolate from I/O overhead.
+fn bench_replace_iter(c: &mut Criterion) {
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .build()
+        .unwrap();
+
+    let mut group = c.benchmark_group("replace_iter");
+
+    // Dense: mostly IPs, few gaps
+    let dense_input = generate_dense_ips(1000);
+    group.throughput(Throughput::Bytes(dense_input.len() as u64));
+    group.bench_with_input(
+        BenchmarkId::new("identity_dense", dense_input.len()),
+        &dense_input,
+        |b, input| {
+            let mut out = Vec::with_capacity(input.len());
+            b.iter(|| {
+                out.clear();
+                extractor
+                    .replace_iter(input, &mut out, |m, w| w.write_all(m.as_bytes()))
+                    .unwrap()
+            });
+        },
+    );
+
+    // Sparse logs: realistic decoration workload
+    let log_input = generate_log_data(1000, 100);
+    group.throughput(Throughput::Bytes(log_input.len() as u64));
+    group.bench_with_input(
+        BenchmarkId::new("identity_logs", log_input.len()),
+        &log_input,
+        |b, input| {
+            let mut out = Vec::with_capacity(input.len());
+            b.iter(|| {
+                out.clear();
+                extractor
+                    .replace_iter(input, &mut out, |m, w| w.write_all(m.as_bytes()))
+                    .unwrap()
+            });
+        },
+    );
+
+    // Redaction: write fixed replacement per match (variable-length output)
+    group.bench_with_input(
+        BenchmarkId::new("redact_logs", log_input.len()),
+        &log_input,
+        |b, input| {
+            let mut out = Vec::with_capacity(input.len());
+            b.iter(|| {
+                out.clear();
+                extractor
+                    .replace_iter(input, &mut out, |_m, w| w.write_all(b"[REDACTED]"))
+                    .unwrap()
+            });
+        },
+    );
+
+    group.finish();
+}
+
+/// Benchmark `IpMatch::ip()` vs the old `str.parse::<IpAddr>()` approach.
+///
+/// The old path parsed every match via `str.parse::<IpAddr>()` which tries
+/// IPv4 first then IPv6 (two attempts for IPv6 matches). `IpMatch::ip()` uses
+/// the known `IpKind` discriminant to dispatch directly.
+fn bench_ip_parsing(c: &mut Criterion) {
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .build()
+        .unwrap();
+
+    let mut group = c.benchmark_group("ip_parsing");
+
+    let mixed_input = generate_log_data(500, 50);
+
+    // New path: match_iter provides kind, ip() dispatches directly
+    group.bench_function("match_iter_ip_direct", |b| {
+        b.iter(|| {
+            extractor
+                .match_iter(&mixed_input)
+                .map(|m| m.ip())
+                .collect::<Vec<IpAddr>>()
+        });
+    });
+
+    // Old path: find_iter returns Range, caller parses via str.parse (trial-and-error)
+    group.bench_function("find_iter_str_parse", |b| {
+        b.iter(|| {
+            extractor
+                .find_iter(&mixed_input)
+                .filter_map(|r| {
+                    std::str::from_utf8(&mixed_input[r])
+                        .ok()
+                        .and_then(|s| s.parse::<IpAddr>().ok())
+                })
+                .collect::<Vec<IpAddr>>()
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_extraction,
+    bench_ipv4_parser_vs_stdlib,
+    bench_match_iter_vs_find_iter,
+    bench_replace_iter,
+    bench_ip_parsing,
+);
 criterion_main!(benches);
