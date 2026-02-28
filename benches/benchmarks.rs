@@ -1,5 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use geoipsed::{ExtractorBuilder, Tag, Tagged};
+use std::io::Write;
 use std::ops::Range;
 
 // Generate test data for extraction benchmarks
@@ -87,6 +88,12 @@ fn bench_extract_ipv4(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("match_iter", |b| {
+        b.iter(|| {
+            extractor.match_iter(black_box(&data)).count()
+        });
+    });
+
     group.finish();
 }
 
@@ -108,6 +115,12 @@ fn bench_extract_ipv6(c: &mut Criterion) {
         b.iter(|| {
             let matches: Vec<Range<usize>> = extractor.find_iter(black_box(&data)).collect();
             black_box(matches);
+        });
+    });
+
+    group.bench_function("match_iter", |b| {
+        b.iter(|| {
+            extractor.match_iter(black_box(&data)).count()
         });
     });
 
@@ -133,6 +146,75 @@ fn bench_extract_mixed(c: &mut Criterion) {
         b.iter(|| {
             let matches: Vec<Range<usize>> = extractor.find_iter(black_box(&data)).collect();
             black_box(matches);
+        });
+    });
+
+    group.bench_function("match_iter", |b| {
+        b.iter(|| {
+            extractor.match_iter(black_box(&data)).count()
+        });
+    });
+
+    group.finish();
+}
+
+// Benchmark replace_iter for single-pass in-line decoration.
+//
+// This is the primary API for the geoipsed decoration path: scan input,
+// write non-IP gaps unchanged, substitute each IP via callback. The output
+// sink is a pre-allocated Vec<u8> to isolate scan+write cost from I/O.
+fn bench_replace_iter(c: &mut Criterion) {
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .private_ips(true)
+        .loopback_ips(true)
+        .broadcast_ips(true)
+        .build()
+        .expect("Failed to build extractor");
+
+    let mut group = c.benchmark_group("replace_iter");
+
+    // Apache access log: one IP per line, realistic gap ratio
+    let mixed_data = generate_mixed_lines(1000);
+    group.throughput(Throughput::Bytes(mixed_data.len() as u64));
+
+    // Identity: write each IP unchanged — measures pure scan+gap-write overhead
+    group.bench_function("identity", |b| {
+        let mut out = Vec::with_capacity(mixed_data.len());
+        b.iter(|| {
+            out.clear();
+            extractor
+                .replace_iter(black_box(&mixed_data), &mut out, |m, w| {
+                    w.write_all(m.as_bytes())
+                })
+                .unwrap();
+        });
+    });
+
+    // Redact: constant replacement — simulates privacy-scrubbing pipelines
+    group.bench_function("redact", |b| {
+        let mut out = Vec::with_capacity(mixed_data.len());
+        b.iter(|| {
+            out.clear();
+            extractor
+                .replace_iter(black_box(&mixed_data), &mut out, |_m, w| {
+                    w.write_all(b"[REDACTED]")
+                })
+                .unwrap();
+        });
+    });
+
+    // Annotate: write IP + kind tag — simulates lightweight decoration without MMDB
+    group.bench_function("annotate", |b| {
+        let mut out = Vec::with_capacity(mixed_data.len() * 2);
+        b.iter(|| {
+            out.clear();
+            extractor
+                .replace_iter(black_box(&mixed_data), &mut out, |m, w| {
+                    write!(w, "<{}>", m.as_str())
+                })
+                .unwrap();
         });
     });
 
@@ -248,6 +330,7 @@ criterion_group!(
     bench_extract_ipv4,
     bench_extract_ipv6,
     bench_extract_mixed,
+    bench_replace_iter,
     bench_tagged_write,
     bench_tagged_json,
     bench_template_render
