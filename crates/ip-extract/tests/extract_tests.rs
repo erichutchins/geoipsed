@@ -1,4 +1,5 @@
 use ip_extract::{ExtractorBuilder, IpKind, IpMatch};
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 
@@ -1272,4 +1273,119 @@ fn test_match_iter_ipv4_only_no_v6() {
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].kind(), IpKind::V4);
     assert_eq!(matches[0].as_str(), "10.0.0.1");
+}
+
+#[test]
+fn test_replace_iter_no_ips() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"no ips here at all";
+    let mut out = Vec::new();
+    let count = extractor
+        .replace_iter(haystack, &mut out, |_m, _w| Ok(()))
+        .unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(out, haystack);
+}
+
+#[test]
+fn test_replace_iter_identity() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"from 10.0.0.1 to 2001:db8::1 done";
+    let mut out = Vec::new();
+    let count = extractor
+        .replace_iter(haystack, &mut out, |m, w| w.write_all(m.as_bytes()))
+        .unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(out, haystack);
+}
+
+#[test]
+fn test_replace_iter_single_ip_middle() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"server 8.8.8.8 is up";
+    let mut out = Vec::new();
+    extractor
+        .replace_iter(haystack, &mut out, |_m, w| w.write_all(b"[REDACTED]"))
+        .unwrap();
+    assert_eq!(out, b"server [REDACTED] is up");
+}
+
+#[test]
+fn test_replace_iter_ip_at_start() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"8.8.8.8 is a DNS server";
+    let mut out = Vec::new();
+    extractor
+        .replace_iter(haystack, &mut out, |_m, w| w.write_all(b"[IP]"))
+        .unwrap();
+    assert_eq!(out, b"[IP] is a DNS server");
+}
+
+#[test]
+fn test_replace_iter_ip_at_end() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"DNS server is 8.8.8.8";
+    let mut out = Vec::new();
+    extractor
+        .replace_iter(haystack, &mut out, |_m, w| w.write_all(b"[IP]"))
+        .unwrap();
+    assert_eq!(out, b"DNS server is [IP]");
+}
+
+#[test]
+fn test_replace_iter_multiple_ips() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"from 10.0.0.1 to 10.0.0.2 via 10.0.0.3";
+    let mut out = Vec::new();
+    let count = extractor
+        .replace_iter(haystack, &mut out, |_m, w| w.write_all(b"X"))
+        .unwrap();
+    assert_eq!(count, 3);
+    assert_eq!(out, b"from X to X via X");
+}
+
+#[test]
+fn test_replace_iter_callback_deletes() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"remove 10.0.0.1 please";
+    let mut out = Vec::new();
+    extractor
+        .replace_iter(haystack, &mut out, |_m, _w| Ok(()))
+        .unwrap();
+    assert_eq!(out, b"remove  please");
+}
+
+#[test]
+fn test_replace_iter_callback_expands() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"ip: 1.2.3.4";
+    let mut out = Vec::new();
+    extractor
+        .replace_iter(haystack, &mut out, |m, w| {
+            write!(w, "[{}={:?}]", m.as_str(), m.kind())
+        })
+        .unwrap();
+    assert_eq!(out, b"ip: [1.2.3.4=V4]");
+}
+
+#[test]
+fn test_replace_iter_returns_count() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"a 1.1.1.1 b 2.2.2.2 c 3.3.3.3 d";
+    let mut out = Vec::new();
+    let count = extractor
+        .replace_iter(haystack, &mut out, |m, w| w.write_all(m.as_bytes()))
+        .unwrap();
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn test_replace_iter_io_error_propagates() {
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let haystack = b"ip: 1.2.3.4";
+    let mut out = Vec::new();
+    let result = extractor.replace_iter(haystack, &mut out, |_m, _w| {
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "test error"))
+    });
+    assert!(result.is_err());
 }
