@@ -175,3 +175,36 @@ def test_extractor_is_reusable():
     assert e.extract("1.1.1.1") == ["1.1.1.1"]
     assert e.extract("8.8.8.8") == ["8.8.8.8"]
     assert e.extract("192.168.1.1") == []
+
+
+# ---------------------------------------------------------------------------
+# Defang support (always-on)
+# ---------------------------------------------------------------------------
+
+def test_extract_defanged_ipv4():
+    """Defanged IPs should be recognized and returned refanged."""
+    result = ipextract.extract("Attacker at 192[.]168[.]1[.]1")
+    assert result == ["192.168.1.1"]
+
+
+def test_extract_defanged_ipv4_mixed():
+    result = ipextract.extract("src 1.2.3.4 dst 5[.]6[.]7[.]8")
+    assert result == ["1.2.3.4", "5.6.7.8"]
+
+
+def test_extract_defanged_ipv6_single_colons():
+    result = ipextract.extract("IPv6: 2001[:]db8[:]0[:]0[:]0[:]0[:]0[:]1")
+    assert result == ["2001:db8:0:0:0:0:0:1"]
+
+
+def test_extract_unique_defanged_deduplicates():
+    """192.168.1.1 and 192[.]168[.]1[.]1 should count as the same IP."""
+    result = ipextract.extract_unique("192.168.1.1 then 192[.]168[.]1[.]1")
+    assert result == ["192.168.1.1"]
+
+
+def test_extractor_extract_defanged():
+    e = ipextract.Extractor()
+    result = e.extract("8[.]8[.]8[.]8")
+    assert result == ["8.8.8.8"]
+
