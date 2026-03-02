@@ -277,15 +277,16 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
             for line in lines {
                 if only_matching {
                     for m in extractor.match_iter(line) {
-                        if let Some(cached) = cache.get(m.as_bytes()) {
+                        let refanged = m.as_str_refanged();
+                        if let Some(cached) = cache.get(refanged.as_bytes()) {
                             out.write_all(cached.as_bytes())?;
                             out.write_all(b"\n")?;
                         } else {
-                            let result = geoipdb.lookup(m.ip(), m.as_str());
+                            let result = geoipdb.lookup(m.ip(), &refanged);
                             out.write_all(result.as_bytes())?;
                             out.write_all(b"\n")?;
                             if cache.len() < 100_000 {
-                                cache.insert(m.as_bytes().to_vec(), result);
+                                cache.insert(refanged.into_owned().into_bytes(), result);
                             }
                         }
                     }
@@ -293,7 +294,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                     let mut tagged = Tagged::new(line);
                     for m in extractor.match_iter(line) {
                         tagged = tagged.tag(
-                            Tag::new(m.as_str().to_owned())
+                            Tag::new(m.as_str_refanged().into_owned())
                                 .with_range(m.range())
                                 .with_decoration(String::new()),
                         );
@@ -301,13 +302,14 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                     tagged.write_json(&mut out)?;
                 } else {
                     extractor.replace_iter(line, &mut out, |m: &IpMatch, w| {
-                        if let Some(cached) = cache.get(m.as_bytes()) {
+                        let refanged = m.as_str_refanged();
+                        if let Some(cached) = cache.get(refanged.as_bytes()) {
                             w.write_all(cached.as_bytes())
                         } else {
-                            let result = geoipdb.lookup(m.ip(), m.as_str());
+                            let result = geoipdb.lookup(m.ip(), &refanged);
                             w.write_all(result.as_bytes())?;
                             if cache.len() < 100_000 {
-                                cache.insert(m.as_bytes().to_vec(), result);
+                                cache.insert(refanged.into_owned().into_bytes(), result);
                             }
                             Ok(())
                         }
@@ -341,7 +343,7 @@ fn run_justips(args: Args, extractor: &geoipsed::Extractor) -> Result<()> {
             for line in lines {
                 // Always output just IPs, one per line
                 for m in extractor.match_iter(line) {
-                    out.write_all(m.as_bytes())?;
+                    out.write_all(m.as_str_refanged().as_bytes())?;
                     out.write_all(b"\n")?;
                 }
             }
