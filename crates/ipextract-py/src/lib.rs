@@ -72,8 +72,8 @@ impl PyExtractor {
         let bytes = as_bytes(text)?;
         Ok(self
             .inner
-            .find_iter(&bytes)
-            .map(|r| String::from_utf8_lossy(&bytes[r]).into_owned())
+            .match_iter(&bytes)
+            .map(|m| m.as_str_refanged().into_owned())
             .collect())
     }
 
@@ -82,8 +82,8 @@ impl PyExtractor {
         let bytes = as_bytes(text)?;
         let mut seen = HashSet::new();
         let mut result = Vec::new();
-        for r in self.inner.find_iter(&bytes) {
-            let ip = String::from_utf8_lossy(&bytes[r]).into_owned();
+        for m in self.inner.match_iter(&bytes) {
+            let ip = m.as_str_refanged().into_owned();
             if seen.insert(ip.clone()) {
                 result.push(ip);
             }
@@ -98,10 +98,10 @@ impl PyExtractor {
         let bytes = as_bytes(text)?;
         Ok(self
             .inner
-            .find_iter(&bytes)
-            .map(|r| {
-                let ip = String::from_utf8_lossy(&bytes[r.clone()]).into_owned();
-                (ip, r.start, r.end)
+            .match_iter(&bytes)
+            .map(|m| {
+                let r = m.range();
+                (m.as_str_refanged().into_owned(), r.start, r.end)
             })
             .collect())
     }
@@ -226,13 +226,31 @@ impl PyExtractor {
 #[pyfunction]
 fn extract(text: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     let bytes = as_bytes(text)?;
-    ip_extract::extract(&bytes).map_err(|e| PyValueError::new_err(e.to_string()))
+    let extractor = ExtractorBuilder::new()
+        .build()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(extractor
+        .match_iter(&bytes)
+        .map(|m| m.as_str_refanged().into_owned())
+        .collect())
 }
 
 #[pyfunction]
 fn extract_unique(text: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+    use std::collections::HashSet;
     let bytes = as_bytes(text)?;
-    ip_extract::extract_unique(&bytes).map_err(|e| PyValueError::new_err(e.to_string()))
+    let extractor = ExtractorBuilder::new()
+        .build()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for m in extractor.match_iter(&bytes) {
+        let ip = m.as_str_refanged().into_owned();
+        if seen.insert(ip.clone()) {
+            result.push(ip);
+        }
+    }
+    Ok(result)
 }
 
 #[pymodule]
