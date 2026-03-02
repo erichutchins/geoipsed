@@ -1173,12 +1173,12 @@ fn test_ip_match_as_bytes() {
 }
 
 #[test]
-fn test_ip_match_as_str() {
+fn test_ip_match_as_matched_str() {
     let extractor = ExtractorBuilder::new().build().unwrap();
     let haystack = b"connect to 2001:db8::1 now";
     let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].as_str(), "2001:db8::1");
+    assert_eq!(matches[0].as_matched_str(), "2001:db8::1");
 }
 
 #[test]
@@ -1272,7 +1272,7 @@ fn test_match_iter_ipv4_only_no_v6() {
     let matches: Vec<IpMatch> = extractor.match_iter(haystack).collect();
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].kind(), IpKind::V4);
-    assert_eq!(matches[0].as_str(), "10.0.0.1");
+    assert_eq!(matches[0].as_matched_str(), "10.0.0.1");
 }
 
 #[test]
@@ -1362,7 +1362,7 @@ fn test_replace_iter_callback_expands() {
     let mut out = Vec::new();
     extractor
         .replace_iter(haystack, &mut out, |m, w| {
-            write!(w, "[{}={:?}]", m.as_str(), m.kind())
+            write!(w, "[{}={:?}]", m.as_matched_str(), m.kind())
         })
         .unwrap();
     assert_eq!(out, b"ip: [1.2.3.4=V4]");
@@ -1404,7 +1404,7 @@ fn check_defang(haystack: &[u8], expected_refanged: &[&str]) {
 
     let actual: Vec<String> = extractor
         .match_iter(haystack)
-        .map(|m| m.as_str_refanged().to_string())
+        .map(|m| m.as_str().to_string())
         .collect();
 
     assert_eq!(
@@ -1473,22 +1473,22 @@ fn test_ip_method_works_on_defanged_match() {
 }
 
 #[test]
-fn test_refanged_str_no_alloc_for_fanged() {
+fn test_as_str_no_alloc_for_fanged() {
     use std::borrow::Cow;
     let extractor = ExtractorBuilder::new().build().unwrap();
     let data = b"8.8.8.8";
     let m = extractor.match_iter(data).next().unwrap();
-    assert!(matches!(m.as_str_refanged(), Cow::Borrowed(_)));
+    assert!(matches!(m.as_str(), Cow::Borrowed(_)));
 }
 
 #[test]
-fn test_refanged_str_allocates_for_defanged() {
+fn test_as_str_allocates_for_defanged() {
     use std::borrow::Cow;
     let extractor = ExtractorBuilder::new().build().unwrap();
     let data = b"8[.]8[.]8[.]8";
     let m = extractor.match_iter(data).next().unwrap();
-    assert!(matches!(m.as_str_refanged(), Cow::Owned(_)));
-    assert_eq!(m.as_str_refanged().as_ref(), "8.8.8.8");
+    assert!(matches!(m.as_str(), Cow::Owned(_)));
+    assert_eq!(m.as_str().as_ref(), "8.8.8.8");
 }
 
 // ---------------------------------------------------------------------------
@@ -1558,22 +1558,22 @@ fn test_ip_method_on_defanged_match() {
 }
 
 #[test]
-fn test_as_str_refanged_borrowed_for_fanged() {
+fn test_as_str_borrowed_for_fanged() {
     use std::borrow::Cow;
     let extractor = ExtractorBuilder::new().build().unwrap();
     let data = b"8.8.8.8";
     let m = extractor.match_iter(data).next().unwrap();
     // No brackets → zero-alloc Borrowed
-    assert!(matches!(m.as_str_refanged(), Cow::Borrowed(_)));
+    assert!(matches!(m.as_str(), Cow::Borrowed(_)));
 }
 
 #[test]
-fn test_as_str_refanged_owned_for_defanged() {
+fn test_as_str_owned_for_defanged() {
     use std::borrow::Cow;
     let extractor = ExtractorBuilder::new().build().unwrap();
     let data = b"192.168.1[.]50";
     let m = extractor.match_iter(data).next().unwrap();
     // Has bracket → allocated Owned, value is refanged
-    assert!(matches!(m.as_str_refanged(), Cow::Owned(_)));
-    assert_eq!(m.as_str_refanged().as_ref(), "192.168.1.50");
+    assert!(matches!(m.as_str(), Cow::Owned(_)));
+    assert_eq!(m.as_str().as_ref(), "192.168.1.50");
 }

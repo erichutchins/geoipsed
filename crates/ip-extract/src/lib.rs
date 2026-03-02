@@ -43,7 +43,7 @@
 //!
 //! for range in extractor.find_iter(data) {
 //!     let ip = std::str::from_utf8(&data[range.clone()])?;
-//!     let tag = Tag::new(ip).with_range(range);
+//!     let tag = Tag::new(ip, ip).with_range(range);
 //!     tagged = tagged.tag(tag);
 //! }
 //! # Ok(())
@@ -126,29 +126,16 @@ impl<'a> IpMatch<'a> {
         self.bytes
     }
 
-    /// The matched IP address as a string slice.
+    /// The clean IP address as a string, with any defang brackets removed.
     ///
-    /// Returns raw matched bytes — for defanged input, may include bracket
-    /// characters (e.g. `"192.168.1[.]50"`). Use [`as_str_refanged`][Self::as_str_refanged]
-    /// when you need the canonical IP form for parsing, display, or MMDB lookup.
+    /// For normal (fanged) input this is a zero-copy borrow (`Cow::Borrowed`).
+    /// For defanged input (e.g. `"192.168.1[.]50"`) this allocates and strips
+    /// brackets, returning `Cow::Owned("192.168.1.50")`.
     ///
-    /// Zero-copy: this is a slice directly into the haystack. Safe without
-    /// UTF-8 validation because all matched characters (digits, hex, `.`, `:`,
-    /// `[`, `]`) are ASCII.
-    #[inline]
-    pub fn as_str(&self) -> &'a str {
-        // SAFETY: IP characters and brackets are all ASCII.
-        unsafe { std::str::from_utf8_unchecked(self.bytes) }
-    }
-
-    /// The matched IP as a string with defang brackets removed.
-    ///
-    /// For normal (fanged) input this is a zero-copy borrow. For defanged input
-    /// (e.g. `"192.168.1[.]50"`) this allocates and strips brackets.
-    ///
-    /// Use this — not [`as_str`][Self::as_str] — when passing the IP to MMDB
-    /// lookups, deduplication, output, or parsing.
-    pub fn as_str_refanged(&self) -> std::borrow::Cow<'a, str> {
+    /// This is the right default for MMDB lookups, deduplication, output, and
+    /// parsing. For the raw matched text (which may contain brackets), use
+    /// [`as_matched_str`][Self::as_matched_str].
+    pub fn as_str(&self) -> std::borrow::Cow<'a, str> {
         if memchr::memchr(b'[', self.bytes).is_none() {
             // SAFETY: IP characters and brackets are all ASCII.
             std::borrow::Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(self.bytes) })
@@ -157,6 +144,21 @@ impl<'a> IpMatch<'a> {
             // SAFETY: strip_brackets retains only IP characters (ASCII).
             std::borrow::Cow::Owned(unsafe { String::from_utf8_unchecked(cleaned) })
         }
+    }
+
+    /// The raw matched text as a string slice.
+    ///
+    /// Returns the exact bytes matched in the haystack — for defanged input,
+    /// this may include bracket characters (e.g. `"192.168.1[.]50"`). Use
+    /// [`as_str`][Self::as_str] when you need the canonical IP form.
+    ///
+    /// Zero-copy: this is a slice directly into the haystack. Safe without
+    /// UTF-8 validation because all matched characters (digits, hex, `.`, `:`,
+    /// `[`, `]`) are ASCII.
+    #[inline]
+    pub fn as_matched_str(&self) -> &'a str {
+        // SAFETY: IP characters and brackets are all ASCII.
+        unsafe { std::str::from_utf8_unchecked(self.bytes) }
     }
 
     /// The byte range of this match within the original haystack.
@@ -182,7 +184,7 @@ impl<'a> IpMatch<'a> {
     /// Panics if the validated bytes cannot be parsed as an IP address.
     /// This should not happen in practice because matches are validated by the DFA.
     pub fn ip(&self) -> IpAddr {
-        let s = self.as_str_refanged();
+        let s = self.as_str();
         match self.kind {
             IpKind::V4 => IpAddr::V4(s.parse::<Ipv4Addr>().expect("validated by DFA")),
             IpKind::V6 => IpAddr::V6(s.parse::<Ipv6Addr>().expect("validated by DFA")),
@@ -329,7 +331,7 @@ impl Extractor {
     /// let data = b"Log: 192.168.1.1 sent request to 2001:db8::1";
     ///
     /// for m in extractor.match_iter(data) {
-    ///     println!("{} ({:?})", m.as_str(), m.kind());
+    ///     println!("{} ({:?})", m.as_matched_str(), m.kind());
     /// }
     /// # Ok(())
     /// # }
@@ -442,7 +444,7 @@ impl Extractor {
     /// let mut out = Vec::new();
     ///
     /// let count = extractor.replace_iter(data, &mut out, |m, w| {
-    ///     write!(w, "[{}]", m.as_str())
+    ///     write!(w, "[{}]", m.as_matched_str())
     /// })?;
     ///
     /// assert_eq!(count, 1);

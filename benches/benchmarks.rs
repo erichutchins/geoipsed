@@ -207,7 +207,7 @@ fn bench_replace_iter(c: &mut Criterion) {
             out.clear();
             extractor
                 .replace_iter(black_box(&mixed_data), &mut out, |m, w| {
-                    write!(w, "<{}>", m.as_str())
+                    write!(w, "<{}>", m.as_matched_str())
                 })
                 .unwrap();
         });
@@ -232,7 +232,7 @@ fn bench_tagged_write(c: &mut Criterion) {
                 let mut tagged = Tagged::new(line);
                 let mut pos = 0;
                 for i in 0..tag_count {
-                    let tag = Tag::new(format!("192.168.1.{}", i))
+                    let tag = Tag::new(format!("192.168.1.{}", i), format!("192.168.1.{}", i))
                         .with_range(pos..pos + 10)
                         .with_decoration(format!("<AS{}_ORG|US|City>", 1000 + i));
                     tagged = tagged.tag(tag);
@@ -268,7 +268,7 @@ fn bench_tagged_json(c: &mut Criterion) {
                 let mut tagged = Tagged::new(line);
                 let mut pos = 0;
                 for i in 0..tag_count {
-                    let tag = Tag::new(format!("192.168.1.{}", i))
+                    let tag = Tag::new(format!("192.168.1.{}", i), format!("192.168.1.{}", i))
                         .with_range(pos..pos + 10)
                         .with_decoration(format!("<AS{}_ORG|US|City>", 1000 + i));
                     tagged = tagged.tag(tag);

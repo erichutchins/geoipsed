@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     for range in extractor.find_iter(text.as_bytes()) {
         let ip_slice = &text.as_bytes()[range.clone()];
         let ip_str = String::from_utf8_lossy(ip_slice).to_string();
-        tagged = tagged.tag(Tag::new(ip_str).with_range(range));
+        tagged = tagged.tag(Tag::new(&ip_str, &ip_str).with_range(range));
     }
 
     // Set the text data for JSON output

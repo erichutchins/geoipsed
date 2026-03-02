@@ -31,7 +31,7 @@ fn main() -> Result<()> {
         // We can also add "decoration" (simulating a DB lookup).
         let decoration = format!("[{}]", ip_str); // Simple decoration
         tagged = tagged.tag(
-            Tag::new(ip_str)
+            Tag::new(ip_str, ip_str)
                 .with_range(range)
                 .with_decoration(decoration),
         );

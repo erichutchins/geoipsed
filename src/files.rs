@@ -15,14 +15,8 @@ fn tag_content(content: &[u8], extractor: &Extractor, output: &mut dyn Write) ->
     let mut tagged = Tagged::new(content);
 
     // Find all IP addresses in the content
-    for range in extractor.find_iter(content) {
-        let ip_slice = &content[range.clone()];
-        let ip_str = std::str::from_utf8(ip_slice)
-            .context("Invalid UTF-8 in IP address")?
-            .to_string();
-
-        // Add the tag with its range
-        tagged = tagged.tag(Tag::new(ip_str).with_range(range));
+    for m in extractor.match_iter(content) {
+        tagged = tagged.tag(Tag::new(m.as_matched_str(), m.as_str()).with_range(m.range()));
     }
 
     // Only output if we found matches
