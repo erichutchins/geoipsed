@@ -1409,7 +1409,10 @@ fn check_defang(haystack: &[u8], expected_refanged: &[&str]) {
 
     assert_eq!(
         actual,
-        expected_refanged.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        expected_refanged
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
         "\nFailed for haystack: {}\n",
         String::from_utf8_lossy(haystack)
     );
@@ -1517,10 +1520,7 @@ fn test_defang_ipv4_all_separators() {
 
 #[test]
 fn test_defang_mixed_line() {
-    check_defang(
-        b"from 1.2.3.4 to 5.6.7[.]8",
-        &["1.2.3.4", "5.6.7.8"],
-    );
+    check_defang(b"from 1.2.3.4 to 5.6.7[.]8", &["1.2.3.4", "5.6.7.8"]);
 }
 
 // --- IPv6 partial defang ---
