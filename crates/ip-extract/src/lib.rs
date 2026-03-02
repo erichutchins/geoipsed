@@ -395,6 +395,9 @@ impl Extractor {
             let candidate = &haystack[start..end];
 
             // Strip brackets before validation (handles both fanged and defanged input).
+            // On normal (fanged) input, memchr scans ~7-15 bytes per match and finds
+            // nothing — falling straight to the else branch with no allocation. The
+            // strip_brackets path only runs when brackets are actually present.
             if memchr::memchr(b'[', candidate).is_some() {
                 let cleaned = strip_brackets(candidate);
                 if validator.validate(&cleaned) {
@@ -493,60 +496,6 @@ fn strip_brackets(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Pre-process a byte slice to replace defanged notation with normal notation.
-///
-/// Replaces `[.]` → `.` and `[:]` → `:` in a single pass.
-/// Uses a reusable output buffer to avoid per-call allocation.
-///
-/// Returns `true` if any replacements were made.
-pub fn refang(input: &[u8], buf: &mut Vec<u8>) -> bool {
-    buf.clear();
-    buf.reserve(input.len());
-
-    let mut i = 0;
-    let mut changed = false;
-
-    while i < input.len() {
-        // Match [::] (4 bytes) → :: before checking [.] or [:] (3 bytes)
-        if input[i] == b'['
-            && i + 3 < input.len()
-            && input[i + 1] == b':'
-            && input[i + 2] == b':'
-            && input[i + 3] == b']'
-        {
-            buf.push(b':');
-            buf.push(b':');
-            i += 4;
-            changed = true;
-            continue;
-        }
-        // Match [.] or [:] (3 bytes)
-        if input[i] == b'[' && i + 2 < input.len() && input[i + 2] == b']' {
-            let mid = input[i + 1];
-            if mid == b'.' || mid == b':' {
-                buf.push(mid);
-                i += 3;
-                changed = true;
-                continue;
-            }
-        }
-        buf.push(input[i]);
-        i += 1;
-    }
-
-    changed
-}
-
-/// Pre-process with `memchr` fast-path: skip scanning if no `[` is present.
-///
-/// This is the optimized version for the normalize approach benchmark.
-pub fn refang_fast(input: &[u8], buf: &mut Vec<u8>) -> bool {
-    // Fast path: if no brackets at all, no work needed
-    if memchr::memchr(b'[', input).is_none() {
-        return false;
-    }
-    refang(input, buf)
-}
 
 /// A builder for configuring IP extraction behavior.
 ///
