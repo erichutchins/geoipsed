@@ -351,7 +351,7 @@ impl Extractor {
 
             // Bracket-aware boundary scan (defang always-on: [.] and [:] are valid IP chars).
             let floor = end.saturating_sub(55); // wider for bracket notation:
-                                                 // max defanged IPv6 ≈ 53 chars
+                                                // max defanged IPv6 ≈ 53 chars
             let raw_start = (floor..end)
                 .rev()
                 .find(|&i| i == 0 || !is_ip_or_bracket_char(haystack[i - 1]))
@@ -495,7 +495,6 @@ fn strip_brackets(bytes: &[u8]) -> Vec<u8> {
     }
     out
 }
-
 
 /// A builder for configuring IP extraction behavior.
 ///
