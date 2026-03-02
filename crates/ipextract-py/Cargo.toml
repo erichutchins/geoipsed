@@ -13,4 +13,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ip-extract = { path = "../ip-extract" }
-pyo3 = { version = "0.22", features = ["abi3-py310"] }
+pyo3 = { version = "0.28", features = ["abi3-py310"] }

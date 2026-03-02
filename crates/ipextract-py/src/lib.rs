@@ -6,10 +6,12 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyString};
 
 /// Extract bytes from a Python str or bytes object.
+// Perf note: this copies the input. PyO3 0.28's PyBackedStr could avoid the copy
+// via zero-copy borrow, but the one-time copy is negligible vs DFA scanning cost.
 fn as_bytes(text: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
-    if let Ok(s) = text.downcast::<PyString>() {
+    if let Ok(s) = text.cast::<PyString>() {
         Ok(s.to_str()?.as_bytes().to_vec())
-    } else if let Ok(b) = text.downcast::<PyBytes>() {
+    } else if let Ok(b) = text.cast::<PyBytes>() {
         Ok(b.as_bytes().to_vec())
     } else {
         Err(PyValueError::new_err("expected str or bytes"))
