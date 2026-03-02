@@ -339,6 +339,95 @@ fn bench_ip_parsing(c: &mut Criterion) {
     group.finish();
 }
 
+// --- Defang benchmark spike ---
+
+/// Generate a defanged IPv4 address: `192[.]168[.]1[.]1`
+fn random_defanged_ipv4() -> String {
+    let mut rng = rand::thread_rng();
+    let ip = Ipv4Addr::new(rng.gen(), rng.gen(), rng.gen(), rng.gen());
+    ip.to_string().replace('.', "[.]")
+}
+
+/// Generate log-like data with defanged IPv4 addresses.
+fn generate_defanged_log_data(n_ips: usize, bytes_per_ip: usize) -> Vec<u8> {
+    let mut rng = rand::thread_rng();
+    let mut s = String::new();
+    let noise_chars: Vec<char> =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-/\t"
+            .chars()
+            .collect();
+
+    for _ in 0..n_ips {
+        let noise_len = rng.gen_range(bytes_per_ip / 2..bytes_per_ip * 2);
+        for _ in 0..noise_len {
+            s.push(noise_chars[rng.gen_range(0..noise_chars.len())]);
+        }
+        s.push(' ');
+        s.push_str(&random_defanged_ipv4());
+        s.push(' ');
+    }
+    s.into_bytes()
+}
+
+/// Generate log-like data with normal IPv4 addresses (baseline).
+fn generate_normal_ipv4_log_data(n_ips: usize, bytes_per_ip: usize) -> Vec<u8> {
+    let mut rng = rand::thread_rng();
+    let mut s = String::new();
+    let noise_chars: Vec<char> =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-/\t"
+            .chars()
+            .collect();
+
+    for _ in 0..n_ips {
+        let noise_len = rng.gen_range(bytes_per_ip / 2..bytes_per_ip * 2);
+        for _ in 0..noise_len {
+            s.push(noise_chars[rng.gen_range(0..noise_chars.len())]);
+        }
+        s.push(' ');
+        s.push_str(&random_ipv4());
+        s.push(' ');
+    }
+    s.into_bytes()
+}
+
+/// Benchmark defanged vs normal IPv4 extraction throughput.
+///
+/// Measures the always-on defang DFA on both fanged and defanged input.
+fn bench_defang(c: &mut Criterion) {
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(false)
+        .build()
+        .unwrap();
+
+    let mut group = c.benchmark_group("defang_ipv4");
+
+    let normal_input = generate_normal_ipv4_log_data(1000, 100);
+    let defanged_input = generate_defanged_log_data(1000, 100);
+
+    // Baseline: normal (fanged) IPs with always-on defang DFA
+    group.throughput(Throughput::Bytes(normal_input.len() as u64));
+    group.bench_with_input(
+        BenchmarkId::new("baseline", normal_input.len()),
+        &normal_input,
+        |b, input| {
+            b.iter(|| extractor.find_iter(input).count());
+        },
+    );
+
+    // Defanged IPs with the expanded DFA (always-on)
+    group.throughput(Throughput::Bytes(defanged_input.len() as u64));
+    group.bench_with_input(
+        BenchmarkId::new("dfa_defang", defanged_input.len()),
+        &defanged_input,
+        |b, input| {
+            b.iter(|| extractor.find_iter(input).count());
+        },
+    );
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_extraction,
@@ -346,5 +435,6 @@ criterion_group!(
     bench_match_iter_vs_find_iter,
     bench_replace_iter,
     bench_ip_parsing,
+    bench_defang,
 );
 criterion_main!(benches);
