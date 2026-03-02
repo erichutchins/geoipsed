@@ -1389,3 +1389,191 @@ fn test_replace_iter_io_error_propagates() {
     });
     assert!(result.is_err());
 }
+
+// ---------------------------------------------------------------------------
+// Defang tests — defang is always-on (no .defang() builder required).
+// ---------------------------------------------------------------------------
+
+/// Helper for defang tests — uses the default extractor (defang is always-on).
+fn check_defang(haystack: &[u8], expected_refanged: &[&str]) {
+    let extractor = ExtractorBuilder::new()
+        .ipv4(true)
+        .ipv6(true)
+        .build()
+        .expect("Failed to build extractor");
+
+    let actual: Vec<String> = extractor
+        .match_iter(haystack)
+        .map(|m| m.as_str_refanged().to_string())
+        .collect();
+
+    assert_eq!(
+        actual,
+        expected_refanged.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        "\nFailed for haystack: {}\n",
+        String::from_utf8_lossy(haystack)
+    );
+}
+
+#[test]
+fn test_defang_ipv4_basic() {
+    check_defang(b"Attacker at 192[.]168[.]1[.]1", &["192.168.1.1"]);
+}
+
+#[test]
+fn test_defang_ipv4_mixed_with_fanged() {
+    check_defang(
+        b"Src: 10.0.0.1 Dst: 8[.]8[.]8[.]8",
+        &["10.0.0.1", "8.8.8.8"],
+    );
+}
+
+#[test]
+fn test_defang_ipv4_all_defanged() {
+    check_defang(
+        b"192[.]168[.]1[.]1 and 10[.]0[.]0[.]1",
+        &["192.168.1.1", "10.0.0.1"],
+    );
+}
+
+#[test]
+fn test_defang_ipv6_single_colons() {
+    check_defang(
+        b"IPv6: 2001[:]db8[:]0[:]0[:]0[:]0[:]0[:]1",
+        &["2001:db8:0:0:0:0:0:1"],
+    );
+}
+
+// NOTE: `[::]` (double-colon bracket) is NOT supported by the DFA.
+// The `::` compression marker in IPv6 spans regex group boundaries
+// (`(hex:)` + `(:hex)`), and `[::]` is an atomic token that can't be
+// split across groups. Only `[:]` (single-colon bracket) is supported.
+// Fully-expanded defanged IPv6 works: `2001[:]db8[:]0[:]0[:]0[:]0[:]0[:]1`
+
+#[test]
+fn test_defang_normal_ipv4_unchanged() {
+    check_defang(b"Standard: 8.8.8.8 and 1.1.1.1", &["8.8.8.8", "1.1.1.1"]);
+}
+
+#[test]
+fn test_defang_normal_ipv6_unchanged() {
+    check_defang(b"Full: 2001:db8::1", &["2001:db8::1"]);
+}
+
+#[test]
+fn test_ip_method_works_on_defanged_match() {
+    use std::net::IpAddr;
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let data = b"192[.]168[.]1[.]1";
+    let m = extractor.match_iter(data).next().unwrap();
+    assert_eq!(m.ip(), "192.168.1.1".parse::<IpAddr>().unwrap());
+}
+
+#[test]
+fn test_refanged_str_no_alloc_for_fanged() {
+    use std::borrow::Cow;
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let data = b"8.8.8.8";
+    let m = extractor.match_iter(data).next().unwrap();
+    assert!(matches!(m.as_str_refanged(), Cow::Borrowed(_)));
+}
+
+#[test]
+fn test_refanged_str_allocates_for_defanged() {
+    use std::borrow::Cow;
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let data = b"8[.]8[.]8[.]8";
+    let m = extractor.match_iter(data).next().unwrap();
+    assert!(matches!(m.as_str_refanged(), Cow::Owned(_)));
+    assert_eq!(m.as_str_refanged().as_ref(), "8.8.8.8");
+}
+
+// ---------------------------------------------------------------------------
+// Partial defang tests — only some separators are bracketed (realistic analyst style).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_defang_ipv4_last_octet_only() {
+    // Most common style: just bracket the last separator
+    check_defang(b"192.168.1[.]50", &["192.168.1.50"]);
+}
+
+#[test]
+fn test_defang_ipv4_first_separator_only() {
+    check_defang(b"192[.]168.0.1", &["192.168.0.1"]);
+}
+
+#[test]
+fn test_defang_ipv4_two_separators() {
+    check_defang(b"10[.]0[.]0.1", &["10.0.0.1"]);
+}
+
+#[test]
+fn test_defang_ipv4_all_separators() {
+    check_defang(b"8[.]8[.]8[.]8", &["8.8.8.8"]);
+}
+
+// --- Mixed fanged and partially-defanged in one line ---
+
+#[test]
+fn test_defang_mixed_line() {
+    check_defang(
+        b"from 1.2.3.4 to 5.6.7[.]8",
+        &["1.2.3.4", "5.6.7.8"],
+    );
+}
+
+// --- IPv6 partial defang ---
+
+#[test]
+fn test_defang_ipv6_single_bracket_colon() {
+    // Only the first colon is bracketed
+    check_defang(b"2001[:]db8::1", &["2001:db8::1"]);
+}
+
+// test_defang_ipv6_compressed_double_colon — removed.
+// [::] notation is not supported (see note above).
+
+// --- Normal (no defang) input must still work ---
+
+#[test]
+fn test_defang_normal_ipv4_no_regression() {
+    check_defang(b"Standard: 8.8.8.8 and 1.1.1.1", &["8.8.8.8", "1.1.1.1"]);
+}
+
+#[test]
+fn test_defang_normal_ipv6_no_regression() {
+    check_defang(b"IPv6: 2001:db8::1", &["2001:db8::1"]);
+}
+
+// --- API behavior ---
+
+#[test]
+fn test_ip_method_on_defanged_match() {
+    use std::net::IpAddr;
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let data = b"192.168.1[.]50";
+    let m = extractor.match_iter(data).next().unwrap();
+    assert_eq!(m.ip(), "192.168.1.50".parse::<IpAddr>().unwrap());
+}
+
+#[test]
+fn test_as_str_refanged_borrowed_for_fanged() {
+    use std::borrow::Cow;
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let data = b"8.8.8.8";
+    let m = extractor.match_iter(data).next().unwrap();
+    // No brackets → zero-alloc Borrowed
+    assert!(matches!(m.as_str_refanged(), Cow::Borrowed(_)));
+}
+
+#[test]
+fn test_as_str_refanged_owned_for_defanged() {
+    use std::borrow::Cow;
+    let extractor = ExtractorBuilder::new().build().unwrap();
+    let data = b"192.168.1[.]50";
+    let m = extractor.match_iter(data).next().unwrap();
+    // Has bracket → allocated Owned, value is refanged
+    assert!(matches!(m.as_str_refanged(), Cow::Owned(_)));
+    assert_eq!(m.as_str_refanged().as_ref(), "192.168.1.50");
+}

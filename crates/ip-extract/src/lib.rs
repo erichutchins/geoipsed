@@ -128,12 +128,35 @@ impl<'a> IpMatch<'a> {
 
     /// The matched IP address as a string slice.
     ///
-    /// This is safe without UTF-8 validation because IP address characters
-    /// (`[0-9a-fA-F.:]`) are a strict subset of ASCII.
+    /// Returns raw matched bytes — for defanged input, may include bracket
+    /// characters (e.g. `"192.168.1[.]50"`). Use [`as_str_refanged`][Self::as_str_refanged]
+    /// when you need the canonical IP form for parsing, display, or MMDB lookup.
+    ///
+    /// Zero-copy: this is a slice directly into the haystack. Safe without
+    /// UTF-8 validation because all matched characters (digits, hex, `.`, `:`,
+    /// `[`, `]`) are ASCII.
     #[inline]
     pub fn as_str(&self) -> &'a str {
-        // SAFETY: IP addresses consist only of ASCII characters.
+        // SAFETY: IP characters and brackets are all ASCII.
         unsafe { std::str::from_utf8_unchecked(self.bytes) }
+    }
+
+    /// The matched IP as a string with defang brackets removed.
+    ///
+    /// For normal (fanged) input this is a zero-copy borrow. For defanged input
+    /// (e.g. `"192.168.1[.]50"`) this allocates and strips brackets.
+    ///
+    /// Use this — not [`as_str`][Self::as_str] — when passing the IP to MMDB
+    /// lookups, deduplication, output, or parsing.
+    pub fn as_str_refanged(&self) -> std::borrow::Cow<'a, str> {
+        if memchr::memchr(b'[', self.bytes).is_none() {
+            // SAFETY: IP characters and brackets are all ASCII.
+            std::borrow::Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(self.bytes) })
+        } else {
+            let cleaned = strip_brackets(self.bytes);
+            // SAFETY: strip_brackets retains only IP characters (ASCII).
+            std::borrow::Cow::Owned(unsafe { String::from_utf8_unchecked(cleaned) })
+        }
     }
 
     /// The byte range of this match within the original haystack.
@@ -150,16 +173,16 @@ impl<'a> IpMatch<'a> {
 
     /// Parse the matched bytes into an [`IpAddr`].
     ///
-    /// Uses the known [`IpKind`] to avoid trial-and-error parsing. Not cached —
-    /// callers who process the same IP multiple times should cache externally
-    /// (e.g., with a `HashMap<&[u8], String>`).
+    /// Automatically strips defang brackets before parsing — safe to call on
+    /// both normal and defanged matches. Not cached; callers processing the
+    /// same IP repeatedly should cache at a higher level.
     ///
     /// # Panics
     ///
-    /// Panics if the bytes are not a valid IP address. This should never happen
-    /// in practice because matches are produced by the DFA + validator.
+    /// Panics if the validated bytes cannot be parsed as an IP address.
+    /// This should not happen in practice because matches are validated by the DFA.
     pub fn ip(&self) -> IpAddr {
-        let s = self.as_str();
+        let s = self.as_str_refanged();
         match self.kind {
             IpKind::V4 => IpAddr::V4(s.parse::<Ipv4Addr>().expect("validated by DFA")),
             IpKind::V6 => IpAddr::V6(s.parse::<Ipv6Addr>().expect("validated by DFA")),
@@ -258,7 +281,6 @@ impl ValidatorType {
 pub struct Extractor {
     dfa: &'static DFA<&'static [u32]>,
     validators: [ValidatorType; 2],
-    defang: bool,
 }
 
 impl Extractor {
@@ -315,7 +337,6 @@ impl Extractor {
     #[inline]
     pub fn match_iter<'a>(&'a self, haystack: &'a [u8]) -> impl Iterator<Item = IpMatch<'a>> + 'a {
         let mut input = Input::new(haystack);
-        let defang = self.defang;
 
         std::iter::from_fn(move || loop {
             let Ok(Some(m)) = self.dfa.try_search_fwd(&input) else {
@@ -328,13 +349,28 @@ impl Extractor {
 
             input.set_start(end);
 
-            let is_boundary = if defang { is_ip_or_bracket_char } else { is_ip_char };
-
-            let floor = end.saturating_sub(45); // slightly wider for brackets
-            let start = (floor..end)
+            // Bracket-aware boundary scan (defang always-on: [.] and [:] are valid IP chars).
+            let floor = end.saturating_sub(55); // wider for bracket notation:
+                                                 // max defanged IPv6 ≈ 53 chars
+            let raw_start = (floor..end)
                 .rev()
-                .find(|&i| i == 0 || !is_boundary(haystack[i - 1]))
+                .find(|&i| i == 0 || !is_ip_or_bracket_char(haystack[i - 1]))
                 .unwrap_or(floor);
+
+            // A lone `[` at the start of the candidate is a surrounding bracket (e.g. "[3.3.3.3]"),
+            // not a defang bracket. Defang brackets always surround a separator character:
+            // `[.]`, `[:]`, or `[::]`. Skip a leading `[` that is followed by a digit or hex
+            // character (not `.` or `:`), since that pattern is never valid defang notation.
+            let start = if raw_start < end
+                && haystack[raw_start] == b'['
+                && raw_start + 1 < end
+                && haystack[raw_start + 1] != b'.'
+                && haystack[raw_start + 1] != b':'
+            {
+                raw_start + 1
+            } else {
+                raw_start
+            };
 
             let valid_right_boundary = match end.cmp(&haystack.len()) {
                 std::cmp::Ordering::Less => {
@@ -346,7 +382,7 @@ impl Extractor {
                                     && end + 1 < haystack.len()
                                     && haystack[end + 1].is_ascii_digit())
                         }
-                        ValidatorType::IPv6 { .. } => !is_boundary(next),
+                        ValidatorType::IPv6 { .. } => !is_ip_or_bracket_char(next),
                     }
                 }
                 _ => true,
@@ -358,8 +394,8 @@ impl Extractor {
 
             let candidate = &haystack[start..end];
 
-            // For defanged mode, strip brackets before validation
-            if defang && memchr::memchr(b'[', candidate).is_some() {
+            // Strip brackets before validation (handles both fanged and defanged input).
+            if memchr::memchr(b'[', candidate).is_some() {
                 let cleaned = strip_brackets(candidate);
                 if validator.validate(&cleaned) {
                     return Some(IpMatch {
@@ -437,12 +473,7 @@ impl Extractor {
     }
 }
 
-#[inline(always)]
-fn is_ip_char(b: u8) -> bool {
-    matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'.' | b':')
-}
-
-/// Extended boundary check for defanged IPs: also treats `[` and `]` as IP-adjacent.
+/// Boundary check for IP characters including defang brackets `[` and `]`.
 #[inline(always)]
 fn is_ip_or_bracket_char(b: u8) -> bool {
     matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'.' | b':' | b'[' | b']')
@@ -476,6 +507,20 @@ pub fn refang(input: &[u8], buf: &mut Vec<u8>) -> bool {
     let mut changed = false;
 
     while i < input.len() {
+        // Match [::] (4 bytes) → :: before checking [.] or [:] (3 bytes)
+        if input[i] == b'['
+            && i + 3 < input.len()
+            && input[i + 1] == b':'
+            && input[i + 2] == b':'
+            && input[i + 3] == b']'
+        {
+            buf.push(b':');
+            buf.push(b':');
+            i += 4;
+            changed = true;
+            continue;
+        }
+        // Match [.] or [:] (3 bytes)
         if input[i] == b'[' && i + 2 < input.len() && input[i + 2] == b']' {
             let mid = input[i + 1];
             if mid == b'.' || mid == b':' {
@@ -529,7 +574,6 @@ pub struct ExtractorBuilder {
     include_private: bool,
     include_loopback: bool,
     include_broadcast: bool,
-    defang: bool,
 }
 
 impl Default for ExtractorBuilder {
@@ -579,7 +623,6 @@ impl ExtractorBuilder {
             include_private: true,
             include_loopback: true,
             include_broadcast: true,
-            defang: false,
         }
     }
     /// Enable or disable IPv4 address extraction.
@@ -700,18 +743,6 @@ impl ExtractorBuilder {
         self
     }
 
-    /// Enable defanged IP recognition (`[.]` and `[:]` bracket notation).
-    ///
-    /// When enabled, uses an expanded DFA that matches both normal and
-    /// defanged notation. Matched bytes include brackets; use `refang()`
-    /// to normalize before display or lookup.
-    ///
-    /// **Spike only** — this is experimental for benchmarking.
-    pub fn defang(&mut self, enable: bool) -> &mut Self {
-        self.defang = enable;
-        self
-    }
-
     /// Build and return an `Extractor` with the configured settings.
     ///
     /// # Errors
@@ -752,11 +783,7 @@ impl ExtractorBuilder {
             (false, true) => (get_ipv6_dfa(), [ipv6, ipv4]),
             _ => anyhow::bail!("No IP address patterns selected"),
         };
-        Ok(Extractor {
-            dfa,
-            validators,
-            defang: self.defang,
-        })
+        Ok(Extractor { dfa, validators })
     }
 }
 

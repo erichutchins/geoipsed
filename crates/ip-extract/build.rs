@@ -109,9 +109,14 @@ fn build_and_save(
     Ok(())
 }
 
-/// Transform a regex pattern to also match defanged IPv6 colon notation.
+/// Transform a regex pattern to also match defanged IPv6 single-colon notation.
 ///
-/// Expands `:` → `(?::|\[:\])` and `::` → `(?:::|\[::\])`.
+/// Expands `:` → `(?::|\\[:\\])` so that `[:]` is recognized as a defanged colon.
+/// Does NOT expand `[::]` — the double-colon compression marker `::` spans regex
+/// group boundaries in the IPv6 pattern (`(hex:)(:hex)`), and `[::]` is an atomic
+/// token that can't be split across groups. Since defanged IPv6 is rare, we only
+/// support the fully-expanded notation: `2001[:]db8[:]0[:]0[:]0[:]0[:]0[:]1`.
+///
 /// Correctly skips colons inside character classes `[...]` and the `?:` non-capturing
 /// group marker. Handles `(?x)` verbose mode by skipping `#` line comments.
 fn defangify_colons(pattern: &str) -> String {
@@ -162,15 +167,11 @@ fn defangify_colons(pattern: &str) -> String {
                     i += 1;
                     continue;
                 }
-                // Double colon `::` → `(?:::|\[::\])`
-                if i + 1 < bytes.len() && bytes[i + 1] == b':' {
-                    out.push_str(r"(?:::|\[::\])");
-                    i += 2;
-                } else {
-                    // Single colon `:` → `(?::|\[:\])`
-                    out.push_str(r"(?::|\[:\])");
-                    i += 1;
-                }
+                // Every content colon (single or part of `::`) becomes `(?::|\\[:\\])`.
+                // For `::` in the source, this produces `(?::|\\[:\\])(?::|\\[:\\])`,
+                // which correctly matches `::`, `[:]:`  `::[:]`, or `[:][:]`.
+                out.push_str(r"(?::|\[:\])");
+                i += 1;
             }
             _ => {
                 out.push(b as char);
