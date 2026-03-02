@@ -139,7 +139,7 @@ fn test_tagged_text() {
         let decorated = geoipsed.lookup(ip, ip_str);
 
         tagged = tagged.tag(
-            Tag::new(ip_str)
+            Tag::new(ip_str, ip_str)
                 .with_range(range)
                 .with_decoration(decorated),
         );
@@ -175,7 +175,7 @@ fn test_multiple_ips() {
         let decorated = geoipsed.lookup(ip, ip_str);
 
         tagged = tagged.tag(
-            Tag::new(ip_str)
+            Tag::new(ip_str, ip_str)
                 .with_range(range)
                 .with_decoration(decorated),
         );

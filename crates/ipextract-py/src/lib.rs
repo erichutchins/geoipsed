@@ -75,7 +75,7 @@ impl PyExtractor {
         Ok(self
             .inner
             .match_iter(&bytes)
-            .map(|m| m.as_str_refanged().into_owned())
+            .map(|m| m.as_str().into_owned())
             .collect())
     }
 
@@ -85,7 +85,7 @@ impl PyExtractor {
         let mut seen = HashSet::new();
         let mut result = Vec::new();
         for m in self.inner.match_iter(&bytes) {
-            let ip = m.as_str_refanged().into_owned();
+            let ip = m.as_str().into_owned();
             if seen.insert(ip.clone()) {
                 result.push(ip);
             }
@@ -103,7 +103,7 @@ impl PyExtractor {
             .match_iter(&bytes)
             .map(|m| {
                 let r = m.range();
-                (m.as_str_refanged().into_owned(), r.start, r.end)
+                (m.as_str().into_owned(), r.start, r.end)
             })
             .collect())
     }
@@ -233,7 +233,7 @@ fn extract(text: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(extractor
         .match_iter(&bytes)
-        .map(|m| m.as_str_refanged().into_owned())
+        .map(|m| m.as_str().into_owned())
         .collect())
 }
 
@@ -247,7 +247,7 @@ fn extract_unique(text: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     for m in extractor.match_iter(&bytes) {
-        let ip = m.as_str_refanged().into_owned();
+        let ip = m.as_str().into_owned();
         if seen.insert(ip.clone()) {
             result.push(ip);
         }

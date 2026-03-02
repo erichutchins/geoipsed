@@ -5,7 +5,9 @@ use std::ops::Range;
 /// A tag representing an IP address found in text.
 #[derive(Clone, Debug, Serialize)]
 pub struct Tag {
-    /// The IP address text itself.
+    /// The raw matched text from the haystack (may include defang brackets).
+    matched: String,
+    /// The clean IP address (defang brackets stripped).
     #[serde(rename = "value")]
     ip: String,
     /// The range in the original text where the IP was found.
@@ -19,10 +21,12 @@ pub struct Tag {
 impl Tag {
     /// Create a new tag for an IP address.
     ///
-    /// The `ip` should be the literal text of the IP address as found in the input.
+    /// `matched` is the raw text as it appeared in the haystack (may contain
+    /// defang brackets). `ip` is the clean, refanged IP address.
     #[inline]
-    pub fn new<S: Into<String>>(ip: S) -> Tag {
+    pub fn new<S: Into<String>, T: Into<String>>(matched: S, ip: T) -> Tag {
         Tag {
+            matched: matched.into(),
             ip: ip.into(),
             range: None,
             decorated: None,
@@ -46,11 +50,18 @@ impl Tag {
         self
     }
 
-    /// Get the IP address text.
+    /// Get the clean IP address text.
     #[inline]
     #[must_use]
     pub fn ip(&self) -> &str {
         &self.ip
+    }
+
+    /// Get the raw matched text from the haystack.
+    #[inline]
+    #[must_use]
+    pub fn matched(&self) -> &str {
+        &self.matched
     }
 
     /// Get the range of this tag in the original text, if available.

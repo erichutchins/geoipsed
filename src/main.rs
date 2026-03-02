@@ -277,7 +277,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
             for line in lines {
                 if only_matching {
                     for m in extractor.match_iter(line) {
-                        let refanged = m.as_str_refanged();
+                        let refanged = m.as_str();
                         if let Some(cached) = cache.get(refanged.as_bytes()) {
                             out.write_all(cached.as_bytes())?;
                             out.write_all(b"\n")?;
@@ -294,7 +294,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                     let mut tagged = Tagged::new(line);
                     for m in extractor.match_iter(line) {
                         tagged = tagged.tag(
-                            Tag::new(m.as_str_refanged().into_owned())
+                            Tag::new(m.as_matched_str(), m.as_str())
                                 .with_range(m.range())
                                 .with_decoration(String::new()),
                         );
@@ -302,7 +302,7 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
                     tagged.write_json(&mut out)?;
                 } else {
                     extractor.replace_iter(line, &mut out, |m: &IpMatch, w| {
-                        let refanged = m.as_str_refanged();
+                        let refanged = m.as_str();
                         if let Some(cached) = cache.get(refanged.as_bytes()) {
                             w.write_all(cached.as_bytes())
                         } else {
@@ -343,7 +343,7 @@ fn run_justips(args: Args, extractor: &geoipsed::Extractor) -> Result<()> {
             for line in lines {
                 // Always output just IPs, one per line
                 for m in extractor.match_iter(line) {
-                    out.write_all(m.as_str_refanged().as_bytes())?;
+                    out.write_all(m.as_str().as_bytes())?;
                     out.write_all(b"\n")?;
                 }
             }
