@@ -175,9 +175,9 @@ impl<'a> IpMatch<'a> {
 struct AlignedDfa<T: ?Sized>(T);
 
 static IPV4_DFA_BYTES: &AlignedDfa<[u8]> =
-    &AlignedDfa(*include_bytes!(concat!(env!("OUT_DIR"), "/ipv4_only.dfa")));
+    &AlignedDfa(*include_bytes!(concat!(env!("OUT_DIR"), "/ipv4.dfa")));
 static IPV6_DFA_BYTES: &AlignedDfa<[u8]> =
-    &AlignedDfa(*include_bytes!(concat!(env!("OUT_DIR"), "/ipv6_only.dfa")));
+    &AlignedDfa(*include_bytes!(concat!(env!("OUT_DIR"), "/ipv6.dfa")));
 static BOTH_DFA_BYTES: &AlignedDfa<[u8]> =
     &AlignedDfa(*include_bytes!(concat!(env!("OUT_DIR"), "/both.dfa")));
 
@@ -258,6 +258,7 @@ impl ValidatorType {
 pub struct Extractor {
     dfa: &'static DFA<&'static [u32]>,
     validators: [ValidatorType; 2],
+    defang: bool,
 }
 
 impl Extractor {
@@ -314,6 +315,7 @@ impl Extractor {
     #[inline]
     pub fn match_iter<'a>(&'a self, haystack: &'a [u8]) -> impl Iterator<Item = IpMatch<'a>> + 'a {
         let mut input = Input::new(haystack);
+        let defang = self.defang;
 
         std::iter::from_fn(move || loop {
             let Ok(Some(m)) = self.dfa.try_search_fwd(&input) else {
@@ -326,10 +328,12 @@ impl Extractor {
 
             input.set_start(end);
 
-            let floor = end.saturating_sub(40);
+            let is_boundary = if defang { is_ip_or_bracket_char } else { is_ip_char };
+
+            let floor = end.saturating_sub(45); // slightly wider for brackets
             let start = (floor..end)
                 .rev()
-                .find(|&i| i == 0 || !is_ip_char(haystack[i - 1]))
+                .find(|&i| i == 0 || !is_boundary(haystack[i - 1]))
                 .unwrap_or(floor);
 
             let valid_right_boundary = match end.cmp(&haystack.len()) {
@@ -342,7 +346,7 @@ impl Extractor {
                                     && end + 1 < haystack.len()
                                     && haystack[end + 1].is_ascii_digit())
                         }
-                        ValidatorType::IPv6 { .. } => !is_ip_char(next),
+                        ValidatorType::IPv6 { .. } => !is_boundary(next),
                     }
                 }
                 _ => true,
@@ -352,9 +356,21 @@ impl Extractor {
                 continue;
             }
 
-            if validator.validate(&haystack[start..end]) {
+            let candidate = &haystack[start..end];
+
+            // For defanged mode, strip brackets before validation
+            if defang && memchr::memchr(b'[', candidate).is_some() {
+                let cleaned = strip_brackets(candidate);
+                if validator.validate(&cleaned) {
+                    return Some(IpMatch {
+                        bytes: candidate,
+                        range: start..end,
+                        kind: validator.kind(),
+                    });
+                }
+            } else if validator.validate(candidate) {
                 return Some(IpMatch {
-                    bytes: &haystack[start..end],
+                    bytes: candidate,
                     range: start..end,
                     kind: validator.kind(),
                 });
@@ -426,6 +442,67 @@ fn is_ip_char(b: u8) -> bool {
     matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'.' | b':')
 }
 
+/// Extended boundary check for defanged IPs: also treats `[` and `]` as IP-adjacent.
+#[inline(always)]
+fn is_ip_or_bracket_char(b: u8) -> bool {
+    matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'.' | b':' | b'[' | b']')
+}
+
+/// Strip `[` and `]` from a byte slice, returning a cleaned copy.
+///
+/// Used by the defang DFA approach to normalize `192[.]168[.]1[.]1` → `192.168.1.1`
+/// before feeding to the standard validator.
+fn strip_brackets(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    for &b in bytes {
+        if b != b'[' && b != b']' {
+            out.push(b);
+        }
+    }
+    out
+}
+
+/// Pre-process a byte slice to replace defanged notation with normal notation.
+///
+/// Replaces `[.]` → `.` and `[:]` → `:` in a single pass.
+/// Uses a reusable output buffer to avoid per-call allocation.
+///
+/// Returns `true` if any replacements were made.
+pub fn refang(input: &[u8], buf: &mut Vec<u8>) -> bool {
+    buf.clear();
+    buf.reserve(input.len());
+
+    let mut i = 0;
+    let mut changed = false;
+
+    while i < input.len() {
+        if input[i] == b'[' && i + 2 < input.len() && input[i + 2] == b']' {
+            let mid = input[i + 1];
+            if mid == b'.' || mid == b':' {
+                buf.push(mid);
+                i += 3;
+                changed = true;
+                continue;
+            }
+        }
+        buf.push(input[i]);
+        i += 1;
+    }
+
+    changed
+}
+
+/// Pre-process with `memchr` fast-path: skip scanning if no `[` is present.
+///
+/// This is the optimized version for the normalize approach benchmark.
+pub fn refang_fast(input: &[u8], buf: &mut Vec<u8>) -> bool {
+    // Fast path: if no brackets at all, no work needed
+    if memchr::memchr(b'[', input).is_none() {
+        return false;
+    }
+    refang(input, buf)
+}
+
 /// A builder for configuring IP extraction behavior.
 ///
 /// Use `ExtractorBuilder` to specify which types of IP addresses should be extracted.
@@ -452,6 +529,7 @@ pub struct ExtractorBuilder {
     include_private: bool,
     include_loopback: bool,
     include_broadcast: bool,
+    defang: bool,
 }
 
 impl Default for ExtractorBuilder {
@@ -501,6 +579,7 @@ impl ExtractorBuilder {
             include_private: true,
             include_loopback: true,
             include_broadcast: true,
+            defang: false,
         }
     }
     /// Enable or disable IPv4 address extraction.
@@ -621,6 +700,18 @@ impl ExtractorBuilder {
         self
     }
 
+    /// Enable defanged IP recognition (`[.]` and `[:]` bracket notation).
+    ///
+    /// When enabled, uses an expanded DFA that matches both normal and
+    /// defanged notation. Matched bytes include brackets; use `refang()`
+    /// to normalize before display or lookup.
+    ///
+    /// **Spike only** — this is experimental for benchmarking.
+    pub fn defang(&mut self, enable: bool) -> &mut Self {
+        self.defang = enable;
+        self
+    }
+
     /// Build and return an `Extractor` with the configured settings.
     ///
     /// # Errors
@@ -652,7 +743,8 @@ impl ExtractorBuilder {
             include_loopback: self.include_loopback,
         };
         // Pattern IDs assigned by build_many order: 0 = IPv4, 1 = IPv6.
-        // validators[pid] must stay in sync with build.rs build_many(&[IPV4_PATTERN, IPV6_PATTERN]).
+        // All DFAs are defang-aware (match both normal and bracket notation).
+        // validators[pid] must stay in sync with build.rs build_many order.
         let (dfa, validators) = match (self.include_ipv4, self.include_ipv6) {
             (true, true) => (get_both_dfa(), [ipv4, ipv6]),
             (true, false) => (get_ipv4_dfa(), [ipv4, ipv6]),
@@ -660,7 +752,11 @@ impl ExtractorBuilder {
             (false, true) => (get_ipv6_dfa(), [ipv6, ipv4]),
             _ => anyhow::bail!("No IP address patterns selected"),
         };
-        Ok(Extractor { dfa, validators })
+        Ok(Extractor {
+            dfa,
+            validators,
+            defang: self.defang,
+        })
     }
 }
 
