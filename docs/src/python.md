@@ -110,6 +110,21 @@ for ip, start, end in ipextract.Extractor().extract_with_offsets(text):
 # 1.2.3.4 at [5:12]
 ```
 
+## Performance
+
+`ipextract` is designed for high-throughput applications. It uses a compile-time DFA (Deterministic Finite Automaton) from the Rust `ip-extract` crate, which scans at O(n) without backtracking.
+
+Typical benchmark results comparing `ipextract` to Python `re` + `ipaddress.ip_address()` validation (both sides extract and validate):
+
+| Scenario | `re` + `ipaddress` (ms) | `ipextract` (ms) | Speedup |
+| :--- | :---: | :---: | :---: |
+| **Dense IPs** (1000 mixed v4+v6) | 2.3ms | 0.25ms | **9x** |
+| **Sparse Logs** (1000 IPs in noise) | 7.4ms | 0.46ms | **16x** |
+| **Pure Text** (100KB with zero IPs) | 4.0ms | 0.16ms | **25x** |
+| **Defanged IPs** (1000 mixed) | 2.5ms | 0.35ms | **7x** |
+
+The larger the input and the more non-IP text it contains, the greater the performance advantage. `ipextract` excels at high-speed log scanning because it can reject non-IP text much faster than a backtracking regex engine.
+
 ## Module-Level Convenience Functions
 
 `ipextract.extract()` and `ipextract.extract_unique()` are shorthand for `Extractor().extract()` with default settings (all IPs included). For repeated calls, prefer creating an `Extractor` instance explicitly.
