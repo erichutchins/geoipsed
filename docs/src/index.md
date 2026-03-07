@@ -49,7 +49,6 @@ Options:
   -t, --template <TEMPLATE>  Specify the format of the IP address decoration. Use the --list-templates option to see which fields are available. Field names are enclosed in {}, for example "{field1} any fixed string {field2} & {field3}"
       --tag                  Output matches as JSON with tag information for each line
       --tag-files            Output matches as JSON with tag information for entire files
-  -j, --justips              Extract IPs only without MMDB lookups or templating (fast path, implies --only-matching)
       --all                  Include all types of IP addresses in matches
       --no-private           Exclude private IP addresses from matches
       --no-loopback          Exclude loopback IP addresses from matches
@@ -71,9 +70,6 @@ geoipsed access.log
 
 # Only matching IPs (with decoration)
 geoipsed -o access.log
-
-# Literally just the matching IPs
-geoipsed -j access.log
 
 # Custom template
 geoipsed -t "{ip} in {country_iso}" access.log

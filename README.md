@@ -49,7 +49,6 @@ Options:
   -t, --template <TEMPLATE>  Specify the format of the IP address decoration. Use the --list-templates option to see which fields are available. Field names are enclosed in {}, for example "{field1} any fixed string {field2} & {field3}"
       --tag                  Output matches as JSON with tag information for each line
       --tag-files            Output matches as JSON with tag information for entire files
-  -j, --justips              Extract IPs only without MMDB lookups or templating (fast path, implies --only-matching)
       --all                  Include all types of IP addresses in matches
       --no-private           Exclude private IP addresses from matches
       --no-loopback          Exclude loopback IP addresses from matches
@@ -72,9 +71,6 @@ geoipsed access.log
 # Only matching IPs (with decoration)
 geoipsed -o access.log
 
-# Literally just the matching IPs
-geoipsed -j access.log
-
 # Custom template
 geoipsed -t "{ip} in {country_iso}" access.log
 
@@ -85,6 +81,17 @@ geoipsed --no-private --no-loopback --no-broadcast access.log
 geoipsed --tag access.log
 ```
 
+### Extracting just IPs
+
+For scenarios where you only need a raw list of IP addresses (like `grep -o` but faster and with IP validation), use the standalone `justips` tool:
+
+```bash
+cargo install justips
+justips access.log
+```
+
+`justips` is a specialized, zero-dependency version of the extraction engine that is ~45% faster than `ripgrep` for finding IPs.
+
 ## Performance
 
 `geoipsed` is highly optimized for sequential IP extraction, even outperforming `ripgrep` itself for this specific task.
@@ -93,11 +100,13 @@ Benchmarked against a **1.7GB Suricata log** (15.4M lines, 30.7M IP matches):
 
 | Tool | Mode | Time | Throughput | Speedup |
 | :--- | :--- | :---: | :---: | :---: |
-| **`geoipsed -j`** | **Internal DFA + Validation** | **4.27s** | **~400 MiB/s** | **1.4x** |
+| **`justips`** | **Parallel mmap + DFA** | **857ms** | **~2 GiB/s** | **7.2x** |
 | `ripgrep` | `rg -ao` (v4/v6 regex) | 6.17s | ~275 MiB/s | Baseline |
 | Python (`re`) | `IPRE.sub()` (baseline) | 431s | ~4 MiB/s | 0.01x |
 
-**Why?** While `ripgrep` is a world-class general search tool, `geoipsed` uses a specialized, compile-time DFA generated via `regex-automata`. This allows it to parse and validate every `IpAddr` during the scan faster than a general regex engine can match the raw text.
+For raw IP extraction (no geolocation), use the standalone [`justips`](crates/justips/) tool — it uses parallel mmap processing and is purpose-built for maximum throughput.
+
+**Why is the DFA so fast?** While `ripgrep` is a world-class general search tool, `geoipsed` and `justips` use a specialized, compile-time DFA generated via `regex-automata`. This allows parsing and validating every `IpAddr` during the scan faster than a general regex engine can match the raw text.
 
 ## Documentation
 

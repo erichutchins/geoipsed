@@ -197,7 +197,7 @@ and `py.typed` marker ensure IDE support.
 - Use `--all` to include all IP types (private, loopback, broadcast)
 - Provide both short (`-o`, `-C`, `-t`, `-L`, `-I`) and long forms for common options
 - Support environment variables for paths (`GEOIP_MMDB_DIR`)
-- `-j/--justips` for fast IP-extraction-only mode (no MMDB lookups, 65-72x faster)
+- For raw IP extraction, use the standalone `justips` crate (parallel mmap, ~2 GiB/s)
 - Defang recognition is always-on — no CLI flag needed
 
 ## Adding New MMDB Providers
@@ -247,7 +247,7 @@ The `.github/workflows/publish-ipextract.yml` handles matrix builds and PyPI aut
   - More verbose but measurably faster for hot lookups
 - **MMDB Lookups**: Cache results by IP to avoid redundant database access
 - **Streaming**: Use buffered I/O and line buffers for large files
-- **Fast path**: Use `-j/--justips` when geolocation not needed (65-72x faster than with MMDB)
+- **Fast path**: For IP extraction without geolocation, use the standalone `justips` crate (parallel mmap, ~2 GiB/s)
 - **Benchmark-driven**: Criterion benchmarks in `crates/ip-extract/benches/` measure throughput
   - IPv4 extraction (sparse logs): ~395 MiB/s
   - Real-world logs (Suricata v4/v6 mixed): ~390 MiB/s (15.4M lines in 4.35s)
