@@ -36,14 +36,13 @@ Compared against Python `re` + `ipaddress.ip_address()` validation (a fair apple
 
 | Scenario | `re` + `ipaddress` (ms) | `ipextract` (ms) | Speedup |
 | :--- | :---: | :---: | :---: |
-| **Dense IPs** (1000 mixed v4+v6) | 2.3ms | 0.25ms | **9x** |
-| **Sparse Logs** (1000 IPs in noise) | 7.4ms | 0.46ms | **16x** |
-| **Pure Text** (100KB with zero IPs) | 4.0ms | 0.16ms | **25x** |
-| **Defanged IPs** (1000 mixed) | 2.5ms | 0.35ms | **7x** |
+| **Sparse Logs** (1000 IPs in noise) | 17.1ms | 4.2ms | **4x** |
+| **Pure Text** (100KB with zero IPs) | 20.0ms | 2.7ms | **7x** |
+| **Dense IPs** (1000 back-to-back) | 1.3ms | 1.8ms | **0.7x** |
 
 ## Features
 
-- **Blazing Fast**: Up to 25x faster than regex for negative scanning (text with no IPs).
+- **Blazing Fast**: Up to 7x faster than regex for negative scanning (text with no IPs).
 - **Configurable**: Filter for public-only, ignore loopback, or skip IPv6 entirely.
 - **Zero Dependencies**: Ships as a self-contained wheel.
 - **Strict**: Eliminates false positives like `1.2.3.4.5` or `123.456.78.9`.

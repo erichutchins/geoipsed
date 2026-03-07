@@ -108,7 +108,8 @@ if !include_broadcast {
 let extractor = builder.build()?;
 
 // Defang support is always-on — no opt-in needed.
-// Defanged IPs (192[.]168[.]1[.]1, 2001[:]db8[::]1) are matched by the default DFA.
+// Defanged IPs (192[.]168[.]1[.]1, 2001[:]db8[:]0[:]0[:]0[:]0[:]0[:]1) are matched by the default DFA.
+// Note: [::] compression is NOT supported in defanged notation — use fully-expanded form.
 let extractor = ExtractorBuilder::new().build()?;
 ```
 
@@ -149,18 +150,18 @@ if json_mode {
 
 ### Defanged IP Support
 
-Defanged IPs (`192[.]168[.]1[.]1`, `2001[:]db8[::]1`) are recognized automatically —
+Defanged IPs (`192[.]168[.]1[.]1`, `2001[:]db8[:]0[:]0[:]0[:]0[:]0[:]1`) are recognized automatically —
 always-on, no configuration needed. The DFA pattern subsumes normal notation, so there
-is no performance cost on normal input (~493 MiB/s on fanged IPv4).
+is no performance cost on normal input (~504 MiB/s on fanged IPv4).
 
 **Key decision** (benchmark spike 2026-02-28): Use DFA expansion over pre-processing
 normalization. The expanded DFA is 16% faster on defanged input (434 vs 374 MiB/s),
 has negligible binary overhead (+3 KB), and adds no regression on normal input.
 
 Always use refanged (normal) IPs for MMDB lookups, cache keys, and output:
-- `IpMatch::as_str_refanged()` — returns `Cow<str>`, zero-copy for fanged input
+- `IpMatch::as_str()` — returns `Cow<str>`, zero-copy for fanged input, cleans defang brackets
+- `IpMatch::as_matched_str()` — raw matched bytes (may contain brackets), useful for logging original input
 - `IpMatch::ip()` — parses to `IpAddr`, strips brackets internally
-- `IpMatch::as_str()` — raw matched bytes (may contain brackets), useful for logging original input
 
 ### Python Bindings Pattern (PyO3 + maturin)
 
@@ -177,19 +178,17 @@ extractor = (
     .ignore_private()
 )
 
-# Convenience functions with defaults
+# Python API exports are stable (abi3-py310)
 ips = extract(text)  # str or bytes → list[str]
 unique_ips = extract_unique(text)  # list[str], order-preserving
 
-# Iterate with details
-for match in extractor.match_iter(text):
-    print(match.as_str())      # Matched IP (may contain brackets if defanged)
-    print(match.range())       # Byte range
-    print(match.kind())        # 'V4' or 'V6'
+# Extract with offsets and metadata
+for ip, start, end in extractor.extract_with_offsets(text):
+    print(f"Found {ip} at {start}:{end}")
 ```
 
-Python API exports are stable (abi3-py310) — wheels work across 3.10-3.13+ without
-recompilation. Type stubs (`__init__.pyi`) and `py.typed` marker ensure IDE support.
+Python API wheels work across 3.10-3.13+ without recompilation. Type stubs (`__init__.pyi`)
+and `py.typed` marker ensure IDE support.
 
 ## Command-Line Interface Conventions
 
@@ -238,7 +237,8 @@ The `.github/workflows/publish-ipextract.yml` handles matrix builds and PyPI aut
 
 ## Performance Considerations
 
-- **IP Extraction**: Compile-time DFA generation via regex-automata for O(n) scanning (~480 MiB/s on logs)
+- **IP Extraction**: Compile-time DFA generation via regex-automata for O(n) scanning (~400 MiB/s on dense logs)
+- **Scale**: Processes 1.7GB of Suricata NDJSON logs (15.4M lines) in 4.35s (**99x faster than Python**)
   - Patterns include defang variants (`[.]`, `[:]`) at no regression cost on normal input
   - Boundary detection uses 55-char backward scan (wider for bracket notation)
 - **Zero-copy semantics**: Returns byte ranges instead of allocating strings
@@ -249,9 +249,12 @@ The `.github/workflows/publish-ipextract.yml` handles matrix builds and PyPI aut
 - **Streaming**: Use buffered I/O and line buffers for large files
 - **Fast path**: Use `-j/--justips` when geolocation not needed (65-72x faster than with MMDB)
 - **Benchmark-driven**: Criterion benchmarks in `crates/ip-extract/benches/` measure throughput
-  - IPv4 extraction (dense, mixed v4+v6): ~146 MiB/s; sparse logs: ~376 MiB/s
-  - IPv4-only baseline (fanged, defang DFA): ~493 MiB/s
-  - Defanged IPv4: ~434 MiB/s (DFA) vs ~374 MiB/s (normalize approach)
+  - IPv4 extraction (sparse logs): ~395 MiB/s
+  - Real-world logs (Suricata v4/v6 mixed): ~390 MiB/s (15.4M lines in 4.35s)
+  - IPv6 extraction: ~253 MiB/s
+  - Dense IPs (mostly IPs): ~152 MiB/s
+  - IPv4-only baseline (fanged): ~504 MiB/s
+  - Defanged IPv4: ~450 MiB/s (DFA)
   - No regression on fanged input with always-on defang DFA
 
 ## Dependencies
@@ -292,7 +295,7 @@ The `.github/workflows/publish-ipextract.yml` handles matrix builds and PyPI aut
 
 ## Common Commands
 
-- `just test`: Run all tests (geoipsed + ip-extract + ipextract-py)
+- `just test`: Run all Rust tests (workspace-wide: geoipsed + ip-extract + ipextract-py native)
 - `just bench`: Run criterion benchmarks (extraction, parsing, defang)
 - `just docs-build`: Build documentation locally (mdBook + cargo doc)
 - `just docs-serve`: Serve documentation locally on port 3000
@@ -315,5 +318,7 @@ The `.github/workflows/publish-ipextract.yml` handles matrix builds and PyPI aut
 - **DFA boundary detection**: The 55-char backward scan accommodates bracket notation
   (max defanged IPv6 ~53 chars). Uses `is_ip_or_bracket_char` for bracket-aware boundaries.
 - **Defang performance**: DFA expansion beats pre-processing normalization by 16%.
-  On normal (fanged) input, the per-match overhead is a ~15-byte memchr scan that
-  finds nothing — negligible cost confirmed by benchmarks.
+  - Supports only single-colon brackets (e.g. `[:]`) and dots (`[.]`).
+  - `[::]` compression in defanged notation is NOT supported (fully-expanded notation required for IPv6).
+  - On normal (fanged) input, the per-match overhead is a ~15-byte memchr scan that
+  - finds nothing — negligible cost confirmed by benchmarks.

@@ -26,7 +26,7 @@ Connection from <81.2.69.205|AS0_|GB|London> to <175.16.199.37|AS0_|CN|Changchun
 - Fine-grained filtering: `--all`, `--no-private`, `--no-loopback`, `--no-broadcast`
 - Color support with `-C/--color`
 - Streaming input (stdin or multiple files)
-- ~60x faster than Python implementations (benchmarked with hyperfine)
+- ~100x faster than Python implementations
 
 ## Databases
 
@@ -87,7 +87,17 @@ geoipsed --tag access.log
 
 ## Performance
 
-Processes 100K lines (3.9MB) in **15.3ms** vs **1.0s** for equivalent Python implementation (65x speedup). Scales to **72x** on larger datasets (500K lines).
+`geoipsed` is highly optimized for sequential IP extraction, even outperforming `ripgrep` itself for this specific task.
+
+Benchmarked against a **1.7GB Suricata log** (15.4M lines, 30.7M IP matches):
+
+| Tool | Mode | Time | Throughput | Speedup |
+| :--- | :--- | :---: | :---: | :---: |
+| **`geoipsed -j`** | **Internal DFA + Validation** | **4.27s** | **~400 MiB/s** | **1.4x** |
+| `ripgrep` | `rg -ao` (v4/v6 regex) | 6.17s | ~275 MiB/s | Baseline |
+| Python (`re`) | `IPRE.sub()` (baseline) | 431s | ~4 MiB/s | 0.01x |
+
+**Why?** While `ripgrep` is a world-class general search tool, `geoipsed` uses a specialized, compile-time DFA generated via `regex-automata`. This allows it to parse and validate every `IpAddr` during the scan faster than a general regex engine can match the raw text.
 
 ## Documentation
 
