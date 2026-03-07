@@ -3,6 +3,7 @@ members = [
     ".",
     "crates/ip-extract",
     "crates/ipextract-py",
+    "crates/justips",
 ]
 resolver = "2"
 
