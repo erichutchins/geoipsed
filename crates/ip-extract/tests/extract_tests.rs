@@ -1385,7 +1385,7 @@ fn test_replace_iter_io_error_propagates() {
     let haystack = b"ip: 1.2.3.4";
     let mut out = Vec::new();
     let result = extractor.replace_iter(haystack, &mut out, |_m, _w| {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "test error"))
+        Err(std::io::Error::other("test error"))
     });
     assert!(result.is_err());
 }
@@ -1576,4 +1576,258 @@ fn test_as_str_owned_for_defanged() {
     // Has bracket → allocated Owned, value is refanged
     assert!(matches!(m.as_str(), Cow::Owned(_)));
     assert_eq!(m.as_str().as_ref(), "192.168.1.50");
+}
+
+// ============================================================================
+// SMTP RECEIVED HEADER TESTS
+// ============================================================================
+
+/// SMTP Received headers contain IPs in several formats:
+///   - Bare parentheses: `(9.17.202.178)`
+///   - Square-bracket literal (RFC 5321): `[32.97.110.151]`
+///   - Name + bracket: `(hostname [9.17.195.106])`
+#[test]
+fn test_smtp_received_bracket_literal_ip() {
+    // RFC 5321 literal IP notation: [32.97.110.151]
+    // The `[` is a valid word boundary, so the IP inside is extracted.
+    check_extraction(
+        b"Received: from e33.co.us.ibm.com ([32.97.110.151]) by COL0-MC1-F36.Col0.hotmail.com",
+        &["32.97.110.151"],
+        true,
+        true,
+    );
+}
+
+#[test]
+fn test_smtp_received_bare_paren_ip() {
+    // IPs wrapped only in parentheses: (9.17.202.178)
+    check_extraction(
+        b"Received: from d03dlp02.boulder.ibm.com (9.17.202.178)\n    by e33.co.us.ibm.com (192.168.1.133)",
+        &["9.17.202.178", "192.168.1.133"],
+        true,
+        true,
+    );
+}
+
+#[test]
+fn test_smtp_received_hostname_bracket_ip() {
+    // Common Postfix format: (hostname [IP])
+    check_extraction(
+        b"Received: from d03relay04.boulder.ibm.com (d03relay04.boulder.ibm.com [9.17.195.106])\n    by d03dlp02.boulder.ibm.com (Postfix)",
+        &["9.17.195.106"],
+        true,
+        true,
+    );
+}
+
+#[test]
+fn test_smtp_received_loopback_in_brackets() {
+    // Loopback in brackets: (loopback [127.0.0.1])
+    check_extraction(
+        b"Received: from d03av01.boulder.ibm.com (loopback [127.0.0.1])\n    by d03av01.boulder.ibm.com",
+        &["127.0.0.1"],
+        true,
+        true, // include loopback
+    );
+}
+
+#[test]
+fn test_smtp_received_loopback_excluded() {
+    check_extraction(
+        b"Received: from d03av01.boulder.ibm.com (loopback [127.0.0.1])\n    by d03av01.boulder.ibm.com",
+        &[],
+        true,
+        false, // exclude loopback
+    );
+}
+
+#[test]
+fn test_smtp_received_full_chain() {
+    // Full realistic Received chain with all common IP notations.
+    // IPs in appearance order:
+    //   32.97.110.151   — bracket literal [IP]
+    //   9.17.202.178    — bare paren (IP)
+    //   192.168.1.133   — bare paren (IP), private
+    //   9.17.195.106    — hostname+bracket (hostname [IP])
+    //   9.17.195.167    — hostname+bracket (hostname [IP])
+    //   127.0.0.1       — loopback [127.0.0.1]
+    //   9.32.140.208    — hostname+bracket (hostname [IP])
+    let headers = b"Received: from e33.co.us.ibm.com ([32.97.110.151]) by COL0-MC1-F36.Col0.hotmail.com with Microsoft SMTPSVC(6.0.3790.4900);\r\n\
+     Tue, 10 Jul 2012 20:40:25 -0700\r\n\
+Received: from /spool/local\r\n\
+    by e33.co.us.ibm.com with IBM ESMTP SMTP Gateway: Authorized Use Only! Violators will be prosecuted\r\n\
+    for <asdfqwerasdf@hotmail.com> from <asdfqwerwen@us.ibm.com>;\r\n\
+    Tue, 10 Jul 2012 21:40:24 -0600\r\n\
+Received: from d03dlp02.boulder.ibm.com (9.17.202.178)\r\n\
+    by e33.co.us.ibm.com (192.168.1.133) with IBM ESMTP SMTP Gateway: Authorized Use Only! Violators will be prosecuted;\r\n\
+    Tue, 10 Jul 2012 21:40:22 -0600\r\n\
+Received: from d03relay04.boulder.ibm.com (d03relay04.boulder.ibm.com [9.17.195.106])\r\n\
+    by d03dlp02.boulder.ibm.com (Postfix) with ESMTP id A425E3E4004E\r\n\
+    for <asdfqwerasdf@hotmail.com>; Wed, 11 Jul 2012 03:40:21 +0000 (WET)\r\n\
+Received: from d03av01.boulder.ibm.com (d03av01.boulder.ibm.com [9.17.195.167])\r\n\
+    by d03relay04.boulder.ibm.com (8.13.8/8.13.8/NCO v10.0) with ESMTP id q6B3dt7X244944\r\n\
+    for <asdfqwerasdf@hotmail.com>; Tue, 10 Jul 2012 21:40:06 -0600\r\n\
+Received: from d03av01.boulder.ibm.com (loopback [127.0.0.1])\r\n\
+    by d03av01.boulder.ibm.com (8.14.4/8.13.1/NCO v10.0 AVout) with ESMTP id q6B3denJ030524\r\n\
+    for <asdfqwerasdf@hotmail.com>; Tue, 10 Jul 2012 21:39:40 -0600\r\n\
+Received: from wtfbes02.edc.lotus.com (wtfbes02.lotus.com [9.32.140.208])\r\n\
+    by d03av01.boulder.ibm.com (8.14.4/8.13.1/NCO v10.0 AVin) with ESMTP id q6B3ddop030485\r\n\
+    for <asdfqwerasdf@hotmail.com>; Tue, 10 Jul 2012 21:39:39 -0600\r\n";
+
+    check_extraction(
+        headers,
+        &[
+            "32.97.110.151",
+            "9.17.202.178",
+            "192.168.1.133",
+            "9.17.195.106",
+            "9.17.195.167",
+            "127.0.0.1",
+            "9.32.140.208",
+        ],
+        true, // include private
+        true, // include loopback
+    );
+}
+
+#[test]
+fn test_smtp_received_full_chain_public_only() {
+    // Same headers but filtering out private (RFC 1918) and loopback.
+    // 192.168.1.133 is RFC 1918 private; 127.0.0.1 is loopback.
+    // 9.x.x.x is IBM internal but not RFC 1918, so it's kept.
+    let headers =
+        b"Received: from e33.co.us.ibm.com ([32.97.110.151]) by COL0-MC1-F36.Col0.hotmail.com;\r\n\
+Received: from d03dlp02.boulder.ibm.com (9.17.202.178)\r\n\
+    by e33.co.us.ibm.com (192.168.1.133);\r\n\
+Received: from d03relay04.boulder.ibm.com (d03relay04.boulder.ibm.com [9.17.195.106]);\r\n\
+Received: from d03av01.boulder.ibm.com (loopback [127.0.0.1]);\r\n\
+Received: from wtfbes02.edc.lotus.com (wtfbes02.lotus.com [9.32.140.208]);\r\n";
+
+    check_extraction(
+        headers,
+        &[
+            "32.97.110.151",
+            "9.17.202.178",
+            // 192.168.1.133 excluded (private)
+            "9.17.195.106",
+            // 127.0.0.1 excluded (loopback)
+            "9.32.140.208",
+        ],
+        false, // exclude private
+        false, // exclude loopback
+    );
+}
+
+// ============================================================================
+// SMTP RECEIVED HEADER — IPv6 TESTS
+// ============================================================================
+//
+// IPv6 addresses appear in SMTP Received headers in several ways:
+//
+//   RFC 5321 literal  : [IPv6:2001:db8::1]         — extracted as 2001:db8::1
+//   Bare brackets     : [2607:f8b0:4864:20::435]   — extracted cleanly
+//   Bare parens       : (2001:db8::1)               — extracted cleanly
+//   Postfix-style     : (host [IPv6:2001:db8::1])  — extracted as 2001:db8::1
+//
+// Two boundary fixes enable this:
+//   1. `]` is now a valid IPv6 right boundary (previously blocked by defang char set).
+//   2. A single hex char + `:` prefix preceded by a non-hex letter (e.g. `6:` from
+//      `IPv6:`) is skipped, recovering the true start of the address.
+
+#[test]
+fn test_smtp_ipv6_bare_paren() {
+    // Most lenient MTA format — bare IPv6 in parentheses.
+    // (IPv6 immediately followed by ')' which is a valid right boundary.)
+    check_extraction(
+        b"Received: from mail.example.com (2001:db8::1)\n    by mx.example.net (2001:db8:cafe::1) with ESMTP",
+        &["2001:db8::1", "2001:db8:cafe::1"],
+        true,
+        true,
+    );
+}
+
+#[test]
+fn test_smtp_ipv6_loopback_bare_paren() {
+    check_extraction(
+        b"Received: from localhost (::1) by mail.example.com",
+        &["::1"],
+        true,
+        true, // include loopback
+    );
+}
+
+#[test]
+fn test_smtp_ipv6_loopback_excluded() {
+    check_extraction(
+        b"Received: from localhost (::1) by mail.example.com",
+        &[],
+        true,
+        false, // exclude loopback
+    );
+}
+
+#[test]
+fn test_smtp_ipv6_full_address_bare_paren() {
+    // Fully-expanded IPv6 in parentheses
+    check_extraction(
+        b"Received: from client (2001:0db8:85a3:0000:0000:8a2e:0370:7334) by server",
+        &["2001:0db8:85a3:0000:0000:8a2e:0370:7334"],
+        true,
+        true,
+    );
+}
+
+#[test]
+fn test_smtp_ipv6_rfc5321_bracket_literal() {
+    // RFC 5321 literal notation: [IPv6:2001:db8::1]
+    // The `IPv6:` tag is handled by skipping the `6:` suffix prefix,
+    // and `]` is now a valid right boundary for IPv6.
+    check_extraction(
+        b"Received: from client ([IPv6:2001:db8::1]) by server",
+        &["2001:db8::1"],
+        true,
+        true,
+    );
+}
+
+#[test]
+fn test_smtp_ipv6_bracket_no_prefix() {
+    // Bare IPv6 in SMTP square brackets (no `IPv6:` tag) — e.g. Google headers.
+    // "from mail-lj1-f178.google.com ([2607:f8b0:4864:20::435]) by mx.google.com"
+    check_extraction(
+        b"Received: from mail-lj1-f178.google.com ([2607:f8b0:4864:20::435]) by mx.google.com with ESMTPSA id",
+        &["2607:f8b0:4864:20::435"],
+        true,
+        true,
+    );
+}
+
+#[test]
+fn test_smtp_ipv6_rfc5321_postfix_style() {
+    // Postfix format: (hostname [IPv6:2001:db8::1])
+    check_extraction(
+        b"Received: from mail.example.com (mail.example.com [IPv6:2001:db8:cafe::1]) by mx.example.net",
+        &["2001:db8:cafe::1"],
+        true,
+        true,
+    );
+}
+
+#[test]
+fn test_smtp_ipv6_mixed_with_ipv4() {
+    // Realistic multi-hop chain with both IPv4 and IPv6 hops.
+    let headers = b"Received: from ipv6-client (2001:db8::42)\n    by mx1.example.com (203.0.113.10) with ESMTP\r\n\
+Received: from mx1.example.com ([203.0.113.10])\n    by mx2.example.com ([IPv6:2001:db8:1::1]) with ESMTP\r\n";
+
+    check_extraction(
+        headers,
+        &[
+            "2001:db8::42",  // bare paren IPv6
+            "203.0.113.10",  // bare paren IPv4
+            "203.0.113.10",  // bracket IPv4
+            "2001:db8:1::1", // bracket IPv6 with IPv6: tag
+        ],
+        true,
+        true,
+    );
 }
