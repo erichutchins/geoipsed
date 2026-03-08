@@ -21,8 +21,7 @@ Benchmarked against a 1.7GB Suricata log dataset (15.4M lines, 30.7M IPs):
 | **Unique ordered** (`-U`) | **967ms** | +13% |
 
 Also:
-- **2x faster** than `geoipsed -j` (parallel mmap vs single-threaded)
-- **3x faster** than `ripgrep` (`rg -o`) for extraction
+- **7x faster** than `ripgrep` (`rg -o`) for IP extraction
 
 ## Usage
 
