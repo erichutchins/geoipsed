@@ -8,6 +8,7 @@ Extract IPv4 and IPv6 addresses from unstructured text with minimal overhead. Th
 
 - ⚡ **Performance Optimized**: Compile-time DFA with O(n) scanning, no runtime regex compilation
 - 🎯 **Strict Validation**: Deep validation eliminates false positives (e.g., rejects `1.2.3.4.5`)
+- 🛡️ **Defang Support**: Automatically matches defanged IPs (`192[.]168[.]1[.]1`, `2001[:]db8[:]...`) with negligible overhead on normal input
 - ⚙️ **Configurable**: Fine-grained control over address types (private, loopback, broadcast)
 - 🔢 **Byte-Oriented**: Zero-copy scanning directly on byte slices, no UTF-8 validation overhead
 
@@ -88,6 +89,26 @@ The example demonstrates:
 2. Scanning input text for IP addresses
 3. Creating tagged output with decorations
 4. Outputting results in both decorated text and JSON formats
+
+## Defanged IP Support
+
+Defanged IPs are commonly used in threat intelligence reports and security logs to prevent accidental clicks or connections. `ip-extract` matches them automatically — no configuration needed.
+
+```rust
+let extractor = ExtractorBuilder::new().build()?;
+
+let input = b"Attacker IP: 192[.]168[.]1[.]1 and 2001[:]db8[:]0[:]0[:]0[:]0[:]0[:]1";
+for m in extractor.match_iter(input) {
+    println!("{}", m.as_str());         // "192.168.1.1" — brackets stripped
+    println!("{}", m.as_matched_str()); // "192[.]168[.]1[.]1" — raw match
+}
+```
+
+Supported notation:
+- IPv4: `[.]` dot brackets (e.g., `192[.]168[.]1[.]1`)
+- IPv6: `[:]` colon brackets (e.g., `2001[:]db8[:]...`), fully-expanded form only
+
+Defang patterns are baked into the DFA at compile time. The expanded DFA adds ~3KB to the binary and has **no measurable regression on normal (fanged) input** — on defanged input it's 16% faster than a pre-processing normalization approach.
 
 ## Benchmarks
 
