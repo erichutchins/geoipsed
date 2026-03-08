@@ -363,6 +363,14 @@ impl Extractor {
             // not a defang bracket. Defang brackets always surround a separator character:
             // `[.]`, `[:]`, or `[::]`. Skip a leading `[` that is followed by a digit or hex
             // character (not `.` or `:`), since that pattern is never valid defang notation.
+            //
+            // Additionally, handle the RFC 5321 SMTP `IPv6:` tag prefix. MTAs write IPv6
+            // addresses as `[IPv6:2001:db8::1]`. The lookback stops at `v` (non-hex letter)
+            // leaving the candidate as `6:2001:db8::1`. Detect this via the heuristic: if the
+            // candidate starts with a single hex digit immediately followed by `:`, and the
+            // character immediately before the candidate in the haystack is a non-hex ASCII
+            // letter, skip that `x:` prefix. This specifically targets the `IPv6:` suffix
+            // pattern (`…v6:` → skip `6:`).
             let start = if raw_start < end
                 && haystack[raw_start] == b'['
                 && raw_start + 1 < end
@@ -370,6 +378,12 @@ impl Extractor {
                 && haystack[raw_start + 1] != b':'
             {
                 raw_start + 1
+            } else if raw_start > 0 && raw_start + 1 < end && haystack[raw_start + 1] == b':' && {
+                let prev = haystack[raw_start - 1];
+                prev.is_ascii_alphabetic() && !matches!(prev, b'a'..=b'f' | b'A'..=b'F')
+            } {
+                // Skip the single-hex-char + `:` prefix (e.g. `6:` from `IPv6:`).
+                raw_start + 2
             } else {
                 raw_start
             };
@@ -384,7 +398,15 @@ impl Extractor {
                                     && end + 1 < haystack.len()
                                     && haystack[end + 1].is_ascii_digit())
                         }
-                        ValidatorType::IPv6 { .. } => !is_ip_or_bracket_char(next),
+                        // `]` is allowed as a right boundary for IPv6. In SMTP literal
+                        // notation (RFC 5321) addresses appear as `[2001:db8::1]` or
+                        // `[IPv6:2001:db8::1]`. In defang notation brackets only appear
+                        // in the middle of the address (`[:]`), never at the very end of
+                        // the DFA match, so a trailing `]` is always a closing bracket.
+                        ValidatorType::IPv6 { .. } => {
+                            !matches!(next, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'
+                                | b'.' | b':' | b'[')
+                        }
                     }
                 }
                 _ => true,
