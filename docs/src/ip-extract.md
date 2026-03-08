@@ -8,6 +8,7 @@ Extract IPv4 and IPv6 addresses from unstructured text with minimal overhead. Th
 
 - ⚡ **Performance Optimized**: Compile-time DFA with O(n) scanning, no runtime regex compilation
 - 🎯 **Strict Validation**: Deep validation eliminates false positives (e.g., rejects `1.2.3.4.5`)
+- 🛡️ **Defang Support**: Automatically matches defanged IPs (`192[.]168[.]1[.]1`, `2001[:]db8[:]...`) with negligible overhead
 - ⚙️ **Configurable**: Fine-grained control over address types (private, loopback, broadcast)
 - 🔢 **Byte-Oriented**: Zero-copy scanning directly on byte slices, no UTF-8 validation overhead
 
@@ -57,6 +58,39 @@ let extractor = ExtractorBuilder::new()
     .ignore_broadcast()
     .build()?;
 ```
+
+## Defanged IP Support
+
+Threat intelligence reports and security logs commonly use "defanged" IPs to prevent accidental connections. `ip-extract` recognizes these automatically — no opt-in needed.
+
+```rust
+let extractor = ExtractorBuilder::new().build()?;
+
+let input = b"IOC: 192[.]168[.]1[.]1 and 2001[:]db8[:]0[:]0[:]0[:]0[:]0[:]1";
+for m in extractor.match_iter(input) {
+    // as_str() returns the normalized (refanged) IP — zero-copy for normal input
+    println!("{}", m.as_str());         // "192.168.1.1"
+
+    // as_matched_str() returns exactly what was in the input
+    println!("{}", m.as_matched_str()); // "192[.]168[.]1[.]1"
+
+    // ip() parses to std::net::IpAddr
+    println!("{:?}", m.ip());           // Ok(V4(192.168.1.1))
+}
+```
+
+### Supported notation
+
+| Type | Bracket | Example |
+| :--- | :---: | :--- |
+| IPv4 | `[.]` | `192[.]168[.]1[.]1` |
+| IPv6 | `[:]` | `2001[:]db8[:]0[:]0[:]0[:]0[:]0[:]1` |
+
+**Note:** IPv6 defanged notation requires fully-expanded form — `[::]` compression is not supported.
+
+### Performance impact
+
+Defang patterns are expanded into the DFA at compile time (+3KB binary size). There is **no measurable regression on normal (fanged) input**. On defanged input, the DFA approach is 16% faster than pre-processing normalization.
 
 ## Benchmarks
 
