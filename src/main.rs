@@ -315,4 +315,3 @@ fn run(args: Args, colormode: ColorChoice) -> Result<()> {
 
     Ok(())
 }
-

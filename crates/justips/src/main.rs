@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use indexmap::IndexSet;
 use ip_extract::ExtractorBuilder;
 use memmap2::Mmap;
 use rayon::prelude::*;
@@ -7,7 +8,6 @@ use ripline::{
     line_buffer::{LineBufferBuilder, LineBufferReader},
     lines::LineIter,
 };
-use indexmap::IndexSet;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Write};
@@ -263,10 +263,7 @@ fn dedup_file(
 }
 
 /// Streaming dedup for stdin — check-and-insert inline, no output until done.
-fn dedup_stdin(
-    extractor: &ip_extract::Extractor,
-    seen: &mut HashSet<String>,
-) -> Result<()> {
+fn dedup_stdin(extractor: &ip_extract::Extractor, seen: &mut HashSet<String>) -> Result<()> {
     let mut line_buffer = LineBufferBuilder::new().capacity(64 * 1024).build();
     let reader = io::stdin();
     let mut lb_reader = LineBufferReader::new(reader, &mut line_buffer);
