@@ -108,6 +108,14 @@ For raw IP extraction (no geolocation), use the standalone [`justips`](crates/ju
 
 **Why is the DFA so fast?** While `ripgrep` is a world-class general search tool, `geoipsed` and `justips` use a specialized, compile-time DFA generated via `regex-automata`. This allows parsing and validating every `IpAddr` during the scan faster than a general regex engine can match the raw text.
 
+## Workspace Crates
+
+| Crate | Description |
+| :--- | :--- |
+| [`ip-extract`](crates/ip-extract/) | Zero-copy IP extraction library — compile-time DFA, defang support, builder pattern |
+| [`justips`](crates/justips/) | Standalone CLI for fast IP extraction — parallel mmap, built-in dedup (`-u`, `-U`) |
+| [`ipextract`](crates/ipextract-py/) | Python bindings (PyO3 + maturin) — stable ABI, published to [PyPI](https://pypi.org/project/ipextract/) |
+
 ## Documentation
 
 Full documentation, architecture details, and benchmarks available at [GitHub Pages](https://erichutchins.github.io/geoipsed/).
