@@ -7,7 +7,7 @@ edition = "2021"
 license = "Unlicense OR MIT"
 repository = "https://github.com/erichutchins/geoipsed"
 readme = "README.md"
-keywords = ["ip", "extraction", "network", "security", "cli", "regex"]
+keywords = ["ip", "extraction", "network", "security", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]

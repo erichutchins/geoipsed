@@ -19,9 +19,14 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      # Wait for crates.io to index ip-extract before publishing geoipsed which depends on it
+      # Wait for crates.io to index ip-extract before publishing dependents
       - name: Wait for crates.io to index
         run: sleep 60
+
+      - name: Publish justips
+        run: cargo publish --manifest-path crates/justips/Cargo.toml
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Publish geoipsed
         run: cargo publish
