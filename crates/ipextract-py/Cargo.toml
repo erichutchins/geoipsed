@@ -1,6 +1,6 @@
 [package]
 name = "ipextract-py"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Eric Hutchins"]
 description = "Python bindings for ip-extract: high-performance IP address extraction"
