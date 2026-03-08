@@ -142,7 +142,7 @@ fn build_extractor(args: &Args) -> Result<ip_extract::Extractor> {
     if !include_broadcast {
         builder.ignore_broadcast();
     }
-    Ok(builder.build()?)
+    builder.build()
 }
 
 // ---------------------------------------------------------------------------
