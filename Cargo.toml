@@ -17,7 +17,7 @@ criterion = { version = "0.8", features = ["html_reports"] }
 
 [package]
 name = "geoipsed"
-version = "0.2.2" #:version
+version = "0.3.0" #:version
 authors = ["Eric Hutchins"]
 description = "Inline decoration of IPv4 and IPv6 address geolocations"
 homepage = "https://github.com/erichutchins/geoipsed"
