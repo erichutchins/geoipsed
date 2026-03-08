@@ -1,6 +1,6 @@
 [package]
 name = "justips"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Eric Hutchins"]
 description = "Fast, standalone IP address extraction cli utility"
 edition = "2021"

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ipextract"
-version = "0.1.1"
+version = "0.2.0"
 description = "High-performance IP address extraction from text, powered by Rust"
 authors = [{ name = "Eric Hutchins" }]
 readme = "README.md"
