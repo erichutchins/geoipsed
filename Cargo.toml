@@ -17,7 +17,7 @@ criterion = { version = "0.8", features = ["html_reports"] }
 
 [package]
 name = "geoipsed"
-version = "0.2.1" #:version
+version = "0.2.2" #:version
 authors = ["Eric Hutchins"]
 description = "Inline decoration of IPv4 and IPv6 address geolocations"
 homepage = "https://github.com/erichutchins/geoipsed"
@@ -59,7 +59,7 @@ maxminddb = { version = "0.27.1", features = ["mmap"] }
 termcolor = "1.4.1"
 thiserror.workspace = true
 bstr.workspace = true
-ip-extract = { version = "0.1.1", path = "crates/ip-extract" }
+ip-extract = { version = "0.1.2", path = "crates/ip-extract" }
 serde.workspace = true
 serde_json.workspace = true
 rustc-hash = "1.1.0"

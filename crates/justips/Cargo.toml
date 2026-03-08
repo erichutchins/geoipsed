@@ -13,7 +13,7 @@ categories = ["command-line-utilities", "network-programming"]
 [dependencies]
 anyhow.workspace = true
 clap = { version = "4.5.21", features = ["derive"] }
-ip-extract = { version = "0.1.1", path = "../ip-extract" }
+ip-extract = { version = "0.1.2", path = "../ip-extract" }
 ripline = "0.1.0"
 memmap2 = "0.9.10"
 rayon = "1.11.0"
